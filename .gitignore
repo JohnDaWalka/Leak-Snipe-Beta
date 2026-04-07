@@ -1,42 +1,51 @@
-__pycache__/
-*.py[cod]
-
-# Local machine state and sensitive config
-settings.json
-dh2_sync_state.json
-*.db
-
-# Root build outputs
+# Build & distribution
 build/
 dist/
-*.exe
+dist-*/
+*.egg-info/
+*.spec.bak
 
-# Nested project outputs and dependency caches
-PokerBuild/.tmp.driveupload/
-PokerBuild/chroma-poker/
-PokerBuild/debug_output/
-PokerBuild/dist/
-PokerBuild/dist-electron/
-PokerBuild/node_modules/
-PokerBuild/npm-install.log
-PokerBuild/npm-install-error.log
-PokerBuild/eb_out.txt
-PokerBuild/tsc_out.txt
-PokerBuild/vite_out.txt
-PokerBuild/go/pkg/mod/
-PokerBuild/go/pkg/sumdb/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
 
-# Embedded trainer workspace artifacts
-PokerBuild/poker-trainer/node_modules/
-PokerBuild/poker-trainer/Poker Therapist Manual/
-PokerBuild/poker-trainer/dist-electron/
-PokerBuild/poker-trainer/release/
-PokerBuild/poker-trainer/debug_output/
-PokerBuild/poker-trainer/build_output/
-PokerBuild/poker-trainer/build_unpacked/
-PokerBuild/poker-trainer/build_current_output.txt
-PokerBuild/poker-trainer/build_output.txt
-PokerBuild/poker-trainer/go/pkg/mod/
-PokerBuild/poker-trainer/go/pkg/sumdb/
-PokerBuild/poker-trainer/Poker-Therapist/go/pkg/mod/
-PokerBuild/poker-trainer/Poker-Therapist/go/pkg/sumdb/
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+secrets/
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Database & Temp
+*.db-journal
+*.tmp
+*.temp
+poker_debug.log
+
+# Old builds
+*.exe.old
+LeakSnipe*.exe
+poker.exe
+
+# Test artifacts
+test_*.py
+artifacts/
+ai_outputs/
+hud_debug.log
