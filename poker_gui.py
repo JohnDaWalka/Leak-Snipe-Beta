@@ -79,7 +79,7 @@ from models import Hand, HandDatabase
 from parsers import HandParser
 from analysis import LeakEngine, SummaryGenerator
 from importing import HandImporter, DriveHUD2Sync
-from utils import font_style as _font_style, canonical_path as _canonical_path, normalize_hud_site_profiles
+from utils import font_style as _font_style, canonical_path as _canonical_path
 
 
 # Legacy globals — kept for backward compat during transition, driven by active theme
