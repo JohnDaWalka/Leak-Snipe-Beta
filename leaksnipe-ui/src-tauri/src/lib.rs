@@ -307,21 +307,10 @@ fn spawn_backend(force: bool) -> Result<SpawnOutcome, String> {
             format!("\nLog tail:\n{tail}")
         };
         eprintln!(
-            "[leaksnipe-ui] External sidecar on port {port} not healthy after 45s — attempting recovery"
+            "[leaksnipe-ui] External sidecar on port {port} not healthy after 45s — will try spawn path"
         );
-        if port_in_use(port) {
-            free_api_port(port);
-            std::thread::sleep(Duration::from_millis(500));
-            if wait_for_healthy_sidecar(port, 24, Duration::from_millis(500)) {
-                eprintln!("[leaksnipe-ui] Reusing sidecar on port {port} after external recovery wait");
-                return Ok(SpawnOutcome {
-                    child: None,
-                    external: true,
-                });
-            }
-        }
         if !tail_hint.is_empty() {
-            eprintln!("[leaksnipe-ui] External sidecar recovery failed.{tail_hint}");
+            eprintln!("[leaksnipe-ui] External sidecar wait failed.{tail_hint}");
         }
     }
 

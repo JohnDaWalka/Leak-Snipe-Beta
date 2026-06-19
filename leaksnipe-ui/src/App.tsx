@@ -85,6 +85,8 @@ function App() {
   const handsCountRef = useRef(0);
   const handsAbortRef = useRef<AbortController | null>(null);
   const statsPollRef = useRef<number | null>(null);
+  const statsWarmStartedRef = useRef<number | null>(null);
+  const STATS_WARM_TIMEOUT_MS = 60_000;
 
   const refreshHands = useCallback(async (silent = false) => {
     handsAbortRef.current?.abort();
@@ -134,29 +136,54 @@ function App() {
     }
   }, []);
 
-  const refreshDashboard = useCallback(async (wait = false) => {
-    setStatsLoading(true);
-    setStatsError(null);
+  const refreshDashboard = useCallback(async (silent = false, wait = false) => {
+    if (!silent) {
+      setStatsLoading(true);
+      setStatsError(null);
+    }
     try {
       const dash = await api.dashboard(wait);
       setDashboard(dash);
       setTotalHands(dash.total_hands);
       if (dash.import_status) setImportStatus(dash.import_status);
+      if (dash.stats_error) {
+        setStatsError(dash.stats_error);
+      } else if (!silent) {
+        setStatsError(null);
+      }
+      if (isDashboardStatsWarming(dash)) {
+        if (statsWarmStartedRef.current == null) {
+          statsWarmStartedRef.current = Date.now();
+        } else if (
+          Date.now() - statsWarmStartedRef.current > STATS_WARM_TIMEOUT_MS
+        ) {
+          const msg =
+            "Leak stats are taking longer than expected. The sidecar may be busy — try Retry or restart the sidecar from Settings.";
+          setStatsError(msg);
+          if (statsPollRef.current != null) {
+            window.clearInterval(statsPollRef.current);
+            statsPollRef.current = null;
+          }
+        }
+      } else {
+        statsWarmStartedRef.current = null;
+        if (!silent) setStatsError(null);
+      }
       return dash;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setStatsError(message);
-      setError(message);
+      if (!silent) setError(message);
       return null;
     } finally {
-      setStatsLoading(false);
+      if (!silent) setStatsLoading(false);
     }
   }, []);
 
   const scheduleStatsWarmPoll = useCallback(() => {
     if (statsPollRef.current != null) return;
     statsPollRef.current = window.setInterval(() => {
-      void refreshDashboard(false).then((dash) => {
+      void refreshDashboard(true).then((dash) => {
         if (dash && !isDashboardStatsWarming(dash) && statsPollRef.current != null) {
           window.clearInterval(statsPollRef.current);
           statsPollRef.current = null;
@@ -169,7 +196,7 @@ function App() {
     async (silent = false) => {
       await refreshHands(silent);
       if (activeTab === "stats") {
-        const dash = await refreshDashboard(false);
+        const dash = await refreshDashboard(silent);
         if (dash && isDashboardStatsWarming(dash)) {
           scheduleStatsWarmPoll();
         }
@@ -282,7 +309,7 @@ function App() {
             const data = JSON.parse(event.data) as { type?: string; count?: number };
             if (data.type === "new_hands" && (data.count ?? 0) > 0) {
               void refreshHands(true);
-              if (activeTab === "stats") void refreshDashboard(false);
+              if (activeTab === "stats") void refreshDashboard(true);
             }
           } catch {
             // ignore malformed SSE payloads
@@ -559,6 +586,8 @@ function App() {
               warming={Boolean(dashboard && isDashboardStatsWarming(dashboard) && !statsError)}
               error={statsError}
               onRetry={() => {
+                statsWarmStartedRef.current = null;
+                setStatsError(null);
                 void refreshDashboard(false).then((dash) => {
                   if (dash && isDashboardStatsWarming(dash)) scheduleStatsWarmPoll();
                 });

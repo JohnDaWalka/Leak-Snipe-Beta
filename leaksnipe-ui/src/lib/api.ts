@@ -140,10 +140,13 @@ export type Dashboard = {
   last_import_count?: number;
   import_status?: ImportStatus;
   stats_cached?: boolean;
+  stats_error?: string | null;
+  stats_warming_sec?: number;
 };
 
 /** True while leak stats are still the non-blocking placeholder shell. */
 export function isDashboardStatsWarming(dashboard: Dashboard): boolean {
+  if (dashboard.stats_error) return false;
   if (dashboard.stats_cached === false) return true;
   if (dashboard.stats_cached !== true) return false;
   // Guard against sidecar race: stats_cached=true paired with placeholder zeros.

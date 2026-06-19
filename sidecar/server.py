@@ -78,6 +78,9 @@ _stats_cache_at: float = 0.0
 _stats_cache_lock = threading.Lock()
 _stats_refreshing = False
 _stats_ready = threading.Event()
+_stats_last_error: Optional[str] = None
+_stats_warm_started: float = 0.0
+_stats_refresh_pending = False
 _ai_env_fingerprint: Optional[tuple] = None
 _ai_lock = threading.Lock()
 
@@ -211,12 +214,22 @@ def _on_new_hands(saved: int, _files: int) -> None:
 
 
 def _invalidate_stats_cache() -> None:
-    global _stats_cache, _stats_cache_at
+    global _stats_cache, _stats_cache_at, _stats_last_error, _stats_warm_started, _stats_refresh_pending
     with _stats_cache_lock:
         _stats_cache = None
         _stats_cache_at = 0.0
+        _stats_last_error = None
+        if _stats_warm_started <= 0.0:
+            _stats_warm_started = time.time()
+        if _stats_refreshing:
+            _stats_refresh_pending = True
+            pending = True
+        else:
+            pending = False
     _stats_ready.clear()
     invalidate_dataset_context_cache()
+    if not pending:
+        _refresh_stats_background(force=True)
 
 
 def _compute_stats(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -226,29 +239,52 @@ def _compute_stats(settings: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _refresh_stats_background(force: bool = False) -> None:
-    global _stats_refreshing
+    global _stats_refreshing, _stats_warm_started, _stats_refresh_pending
 
     def _worker() -> None:
-        global _stats_cache, _stats_cache_at, _stats_refreshing
+        global _stats_cache, _stats_cache_at, _stats_refreshing, _stats_last_error
+        global _stats_refresh_pending, _stats_warm_started
         with _stats_cache_lock:
             if _stats_refreshing:
+                _stats_refresh_pending = True
                 return
             now = time.time()
             if not force and _stats_cache and (now - _stats_cache_at) < STATS_CACHE_TTL_SEC:
                 return
             _stats_refreshing = True
+            _stats_refresh_pending = False
+            if _stats_warm_started <= 0.0:
+                _stats_warm_started = now
         try:
+            logging.info("Stats refresh started (force=%s)", force)
             settings = load_settings()
             stats = _compute_stats(settings)
             with _stats_cache_lock:
                 _stats_cache = stats
                 _stats_cache_at = time.time()
+                _stats_last_error = None
+                _stats_warm_started = 0.0
             _stats_ready.set()
+            logging.info(
+                "Stats refresh complete — %d hands, VPIP %.1f%%, PFR %.1f%%",
+                stats.get("total_hands", 0),
+                stats.get("vpip", 0.0),
+                stats.get("pfr", 0.0),
+            )
         except Exception as exc:
             logging.error("Stats refresh failed: %s", exc, exc_info=True)
+            with _stats_cache_lock:
+                _stats_last_error = str(exc)
+            _stats_ready.set()
         finally:
+            rerun = False
             with _stats_cache_lock:
                 _stats_refreshing = False
+                if _stats_refresh_pending:
+                    _stats_refresh_pending = False
+                    rerun = True
+            if rerun:
+                _refresh_stats_background(force=True)
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -279,7 +315,7 @@ def _get_cached_stats(*, wait: bool = False) -> tuple[Dict[str, Any], bool]:
         cached = _stats_cache
         age = time.time() - _stats_cache_at if _stats_cache_at else None
     if cached is None or (age is not None and age > STATS_CACHE_TTL_SEC):
-        _refresh_stats_background(force=cached is None and wait)
+        _refresh_stats_background(force=cached is None or wait)
     if wait and cached is None:
         _stats_ready.wait(timeout=30.0)
         with _stats_cache_lock:
@@ -390,6 +426,12 @@ def _dashboard_payload(*, wait_for_stats: bool = False) -> Dict[str, Any]:
         "last_import_count": _last_import_count,
         "import_status": import_status,
         "stats_cached": stats_cached,
+        "stats_error": _stats_last_error,
+        "stats_warming_sec": (
+            round(time.time() - _stats_warm_started, 1)
+            if _stats_warm_started > 0.0 and not stats_cached
+            else 0.0
+        ),
     }
 
 
@@ -413,8 +455,6 @@ def _warm_theory_modules() -> None:
 async def lifespan(_app: FastAPI):
     logging.info("LeakSnipe API v%s starting on %s:%s", API_VERSION, API_HOST, API_PORT)
     _get_db()
-    # Do not block startup on full AI status (Ollama probes can take 30s+).
-    # Keys are loaded here; AIProcessor initializes lazily on first /api/ai/* call.
     bootstrap_env(reload_file=True)
     keys = env_keys_detected()
     logging.info(
@@ -424,10 +464,19 @@ async def lifespan(_app: FastAPI):
         keys.get("gemini"),
     )
     _ensure_scan_dirs()
-    _get_importer(refresh_dirs=True)
-    _warm_theory_modules()
-    _refresh_stats_background(force=True)
-    _run_initial_scan_then_watch()
+
+    def _startup_worker() -> None:
+        try:
+            _get_importer(refresh_dirs=True)
+            _warm_theory_modules()
+            global _stats_warm_started
+            _stats_warm_started = time.time()
+            _refresh_stats_background(force=True)
+            _run_initial_scan_then_watch()
+        except Exception as exc:
+            logging.error("Startup worker failed: %s", exc, exc_info=True)
+
+    threading.Thread(target=_startup_worker, daemon=True, name="leaksnipe-startup").start()
     yield
     _stop_watcher()
 

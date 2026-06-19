@@ -53,6 +53,16 @@ export function StatsPanel({ dashboard, loading, warming, error, onRetry }: Stat
     );
   }
 
+  if (error && dashboard && dashboard.stats_cached === false) {
+    return (
+      <StatsUnavailable
+        title="Could not compute leak stats"
+        message={error}
+        onRetry={onRetry}
+      />
+    );
+  }
+
   if (!dashboard) {
     return (
       <StatsUnavailable
@@ -64,9 +74,13 @@ export function StatsPanel({ dashboard, loading, warming, error, onRetry }: Stat
   }
 
   if (warming) {
+    const warmHint =
+      dashboard.stats_warming_sec && dashboard.stats_warming_sec > 0
+        ? ` (${Math.round(dashboard.stats_warming_sec)}s)`
+        : "";
     return (
       <div className="placeholder-card">
-        Computing leak analysis… ({dashboard.total_hands.toLocaleString()} hands in database)
+        Computing leak analysis…{warmHint} ({dashboard.total_hands.toLocaleString()} hands in database)
       </div>
     );
   }

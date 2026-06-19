@@ -68,6 +68,8 @@ class HandDatabase:
         with self.lock:
             conn = self._connect()
             try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=5000")
                 c = conn.cursor()
                 c.executescript("""
                     CREATE TABLE IF NOT EXISTS hands (
