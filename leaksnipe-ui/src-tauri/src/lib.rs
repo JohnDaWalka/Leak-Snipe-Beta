@@ -176,10 +176,10 @@ fn sidecar_healthy(port: u16) -> bool {
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap_or_else(|_| {
         SocketAddr::from(([127, 0, 0, 1], port))
     });
-    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(1500)) else {
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(2500)) else {
         return false;
     };
-    let deadline = Instant::now() + Duration::from_millis(2500);
+    let deadline = Instant::now() + Duration::from_millis(6000);
     let req = format!(
         "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
     );
@@ -293,7 +293,7 @@ fn spawn_backend(force: bool) -> Result<SpawnOutcome, String> {
     // Launch-LeakSnipe.bat / Start-Sidecar.bat may own the process — wait, never kill or respawn.
     if !force && sidecar_managed_externally() {
         eprintln!("[leaksnipe-ui] Waiting for externally managed sidecar on port {port}...");
-        if wait_for_healthy_sidecar(port, 60, Duration::from_millis(500)) {
+        if wait_for_healthy_sidecar(port, 90, Duration::from_millis(500)) {
             eprintln!("[leaksnipe-ui] External sidecar ready on port {port}");
             return Ok(SpawnOutcome {
                 child: None,
@@ -306,11 +306,23 @@ fn spawn_backend(force: bool) -> Result<SpawnOutcome, String> {
         } else {
             format!("\nLog tail:\n{tail}")
         };
-        return Err(format!(
-            "External sidecar on port {port} did not become healthy within 30s. \
-             Check Start-Sidecar.bat or the sidecar console window. Log: {}{tail_hint}",
-            sidecar_log_path().display()
-        ));
+        eprintln!(
+            "[leaksnipe-ui] External sidecar on port {port} not healthy after 45s — attempting recovery"
+        );
+        if port_in_use(port) {
+            free_api_port(port);
+            std::thread::sleep(Duration::from_millis(500));
+            if wait_for_healthy_sidecar(port, 24, Duration::from_millis(500)) {
+                eprintln!("[leaksnipe-ui] Reusing sidecar on port {port} after external recovery wait");
+                return Ok(SpawnOutcome {
+                    child: None,
+                    external: true,
+                });
+            }
+        }
+        if !tail_hint.is_empty() {
+            eprintln!("[leaksnipe-ui] External sidecar recovery failed.{tail_hint}");
+        }
     }
 
     // Another launcher may have just started the sidecar (Launch-LeakSnipe.bat / Start-Sidecar.bat).

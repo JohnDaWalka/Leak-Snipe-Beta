@@ -722,8 +722,8 @@ export function isOllamaProviderRef(provider?: string): boolean {
   return id === "ollama";
 }
 
-/** Fast timeout for startup polling — avoid 5s stalls per attempt when sidecar is still booting. */
-const BACKEND_HEALTH_POLL_MS = 800;
+/** Fast timeout for startup polling — sidecar /health is async but still allow busy startup. */
+const BACKEND_HEALTH_POLL_MS = 2500;
 
 async function fetchHealthOk(base: string, timeoutMs: number): Promise<boolean> {
   const controller = new AbortController();

@@ -93,42 +93,58 @@ def _env_fingerprint() -> tuple:
     return base + digests
 
 
+def _ai_is_stale(*, reload_env: bool = False) -> tuple[bool, Dict[str, Any], str, str]:
+    if reload_env:
+        bootstrap_env(reload_file=True)
+    settings = load_settings()
+    pref_fields = (
+        "ai_provider", "ollama_model", "db_path",
+        "ai_include_dataset_context", "ai_include_web_context", "ai_web_search_mode",
+        "ai_personalization", "ai_agentic_tools", "asi1_model", "hero_names",
+        "coach_memory_db", "coach_memory_hero",
+    )
+    db_path = resolve_db_path(settings)
+    fp = _env_fingerprint()
+    stale = _ai_processor is None or _ai_env_fingerprint != fp
+    if not stale:
+        old = _ai_processor._settings or {}
+        stale = _ai_processor._db_path != db_path or any(
+            old.get(k) != settings.get(k) for k in pref_fields
+        )
+    return stale, settings, db_path, fp
+
+
+def _apply_ai_provider_pref(processor, settings: Dict[str, Any]) -> None:
+    processor._refresh_cloud_clients()
+    if processor._asi1_client:
+        pref = (settings.get("ai_provider") or "asi1").lower()
+        if pref in ("asi1", "auto"):
+            chain = processor._provider_chain()
+            if chain and chain[0] == "asi1":
+                from ai_processor import ASI1_MODEL
+
+                processor._active_provider = f"asi1:{ASI1_MODEL}"
+
+
 def _get_ai(*, reload_env: bool = False):
     global _ai_processor, _ai_env_fingerprint
     with _ai_lock:
-        if reload_env:
-            bootstrap_env(reload_file=True)
-        settings = load_settings()
-        pref_fields = (
-            "ai_provider", "ollama_model", "db_path",
-            "ai_include_dataset_context", "ai_include_web_context", "ai_web_search_mode",
-            "ai_personalization", "ai_agentic_tools", "asi1_model", "hero_names",
-            "coach_memory_db", "coach_memory_hero",
-        )
-        db_path = resolve_db_path(settings)
-        fp = _env_fingerprint()
-        stale = _ai_processor is None or _ai_env_fingerprint != fp
+        stale, settings, db_path, fp = _ai_is_stale(reload_env=reload_env)
         if not stale:
-            old = _ai_processor._settings or {}
-            stale = _ai_processor._db_path != db_path or any(
-                old.get(k) != settings.get(k) for k in pref_fields
-            )
+            _apply_ai_provider_pref(_ai_processor, settings)
+            return _ai_processor
+
+    from ai_processor import AIProcessor
+
+    built = AIProcessor(settings=settings, db_path=db_path)
+    with _ai_lock:
+        stale, settings, db_path, fp = _ai_is_stale(reload_env=False)
         if stale:
-            from ai_processor import AIProcessor
-
             _ai_env_fingerprint = fp
-            _ai_processor = AIProcessor(settings=settings, db_path=db_path)
-        else:
-            _ai_processor._refresh_cloud_clients()
-            if _ai_processor._asi1_client:
-                pref = (settings.get("ai_provider") or "asi1").lower()
-                if pref in ("asi1", "auto"):
-                    chain = _ai_processor._provider_chain()
-                    if chain and chain[0] == "asi1":
-                        from ai_processor import ASI1_MODEL
-
-                        _ai_processor._active_provider = f"asi1:{ASI1_MODEL}"
-        return _ai_processor
+            _ai_processor = built
+        processor = _ai_processor
+        _apply_ai_provider_pref(processor, settings)
+        return processor
 
 
 def _reset_ai():
@@ -377,6 +393,22 @@ def _dashboard_payload(*, wait_for_stats: bool = False) -> Dict[str, Any]:
     }
 
 
+def _warm_theory_modules() -> None:
+    """Import theory modules once at startup to avoid concurrent-import deadlocks."""
+    try:
+        from theory.charts import list_chart_depths  # noqa: F401
+
+        list_chart_depths()
+        from theory.cfr_solver import SOLVABLE_GAMES  # noqa: F401
+
+        _ = SOLVABLE_GAMES
+        from theory.value_net import TORCH_AVAILABLE  # noqa: F401
+
+        _ = TORCH_AVAILABLE
+    except Exception as exc:
+        logging.warning("Theory module warm-up skipped: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logging.info("LeakSnipe API v%s starting on %s:%s", API_VERSION, API_HOST, API_PORT)
@@ -393,6 +425,7 @@ async def lifespan(_app: FastAPI):
     )
     _ensure_scan_dirs()
     _get_importer(refresh_dirs=True)
+    _warm_theory_modules()
     _refresh_stats_background(force=True)
     _run_initial_scan_then_watch()
     yield
@@ -419,7 +452,10 @@ app.add_middleware(
 
 
 @app.get("/health")
-def health() -> Dict[str, Any]:
+async def health() -> Dict[str, Any]:
+    # Must stay async so health is served on the event loop, not the sync thread pool.
+    # When AI/theory/import work saturates thread workers, sync /health never runs and the UI
+    # falsely reports the sidecar offline (or start-sidecar.ps1 kills a busy listener).
     return {"status": "ok", "api_version": API_VERSION}
 
 

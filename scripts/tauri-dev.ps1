@@ -137,7 +137,7 @@ $portInUse = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction Sil
 $sidecarHealthy = $false
 if ($portInUse) {
     try {
-        $health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -TimeoutSec 2
+        $health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -TimeoutSec 8
         $sidecarHealthy = ($null -ne $health.api_version)
     } catch {
         $sidecarHealthy = $false

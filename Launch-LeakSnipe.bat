@@ -7,12 +7,16 @@ echo   LeakSnipe - Poker Therapist
 echo ========================================
 echo.
 
-REM Start Python sidecar in background; Tauri shows immediately and polls health.
-start "LeakSnipe Sidecar" /MIN powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-sidecar.ps1"
-set "LEAKSNIPE_SIDECAR_EXTERNAL=1"
-echo Sidecar starting in background — UI will connect when port 8765 is ready.
+REM Ensure sidecar is healthy (or clear a hung listener) before Tauri starts.
+echo Starting sidecar on port 8765...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-sidecar.ps1"
+if %ERRORLEVEL% NEQ 0 (
+  echo [WARN] Sidecar did not report healthy — Tauri will retry or respawn.
+) else (
+  set "LEAKSNIPE_SIDECAR_EXTERNAL=1"
+  echo Sidecar ready on port 8765.
+)
 echo Stale Vite on port 1420 from a prior session is cleared automatically.
-echo You can also close old LeakSnipe windows before relaunching.
 echo.
 
 REM Double-click friendly: always invoke PowerShell explicitly

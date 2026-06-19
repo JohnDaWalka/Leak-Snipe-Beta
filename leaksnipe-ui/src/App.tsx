@@ -192,13 +192,18 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     const poll = async () => {
+      const status = await getSidecarStatus();
+      if (!cancelled && status?.healthy) {
+        setSidecarOnline(true);
+        if (status) setSidecarStatus(status);
+        return;
+      }
       const ok = await checkBackendHealth({ includeSidecarStatus: false });
       if (cancelled) return;
       if (ok) {
         setSidecarOnline(true);
         return;
       }
-      const status = await getSidecarStatus();
       if (!cancelled) {
         setSidecarOnline(status?.healthy ?? false);
         if (status) setSidecarStatus(status);
