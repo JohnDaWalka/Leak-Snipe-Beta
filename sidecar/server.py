@@ -670,11 +670,25 @@ def get_players_stats(
     if len(requested) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 players per request")
 
-    hands = db.get_all_hands()
+    # Check if we have any uncached players in the request
+    uncached = []
+    for name in requested:
+        cached = db.get_player_type(name)
+        if not cached or cached.get("hands", 0) <= 0:
+            uncached.append(name)
+
+    hands = None
+    all_stats = None
+    if uncached:
+        hands = db.get_all_hands()
+        from analysis import PlayerAnalyzer
+        analyzer = PlayerAnalyzer(settings)
+        all_stats = analyzer.apply_manual_overrides(analyzer.analyze_players(hands), db)
+
     players: Dict[str, Any] = {}
     for name in requested:
         players[name] = player_stats_payload(
-            name, settings=settings, db=db, hands=hands,
+            name, settings=settings, db=db, hands=hands, all_stats=all_stats,
         )
     return {"ok": True, "players": players}
 

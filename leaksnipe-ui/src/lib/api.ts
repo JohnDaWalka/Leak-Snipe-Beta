@@ -185,6 +185,7 @@ export type HandSummary = {
   game_type: string;
   table_name: string;
   hero_cards: string;
+  board_cards: string[];
   hero_won: number;
   hero_position: string;
   hero_name: string;
@@ -198,6 +199,7 @@ export type PlayerInfo = {
   name: string;
   stack: number;
   is_hero: boolean;
+  position?: string;
 };
 
 export type PlayerPositionStats = {
@@ -863,6 +865,132 @@ function normalizeHandDetail(
   }
   return rest as HandDetail;
 }
+export type ToughChartSummary = {
+  id: string;
+  diagram?: number;
+  title: string;
+  category: string;
+  source?: string;
+  source_key?: string;
+  hero_position?: string | null;
+  villain_position?: string | null;
+  stack_bb?: number | null;
+  action_count: number;
+  has_stack_scenario: boolean;
+};
+
+export type ToughChartAction = {
+  name: string;
+  freq: number;
+};
+
+export type ToughStackScenario = {
+  bb_size: number;
+  hero_seat: string;
+  seats: Record<string, number>;
+};
+
+export type ToughChartDetail = {
+  ok?: boolean;
+  id: string;
+  diagram?: number;
+  title: string;
+  category: string;
+  hero_position?: string | null;
+  villain_position?: string | null;
+  stack_bb?: number | null;
+  effective_stack?: number | string | null;
+  spot_description?: string;
+  street?: string;
+  villain_type?: string;
+  villain_profile?: string;
+  pot_type?: string;
+  board?: string;
+  pot_bb?: number;
+  raise_size_bb?: number;
+  spot?: string;
+  chart_type?: string;
+  scenario_type?: string;
+  spot_action?: string;
+  page?: number;
+  pdf_path?: string;
+  pdf_page?: number;
+  browse_note?: string;
+  cfr_link?: {
+    stack_bb: number;
+    position: string;
+    mode?: string;
+    source_stack_bb?: number;
+    source_position?: string;
+  };
+  source?: string;
+  source_key?: string;
+  actions: ToughChartAction[];
+  stack_scenario?: ToughStackScenario;
+  cfr_hint?: string;
+};
+
+export type ToughChartsListResult = {
+  ok: boolean;
+  source: string;
+  sources?: {
+    source_key: string;
+    source: string;
+    chart_count: number;
+    counts_by_category: Record<string, number>;
+  }[];
+  chart_count: number;
+  categories: string[];
+  counts_by_category: Record<string, number>;
+  note: string;
+  charts: ToughChartSummary[];
+};
+
+export type ToughEvaluateResult = {
+  ok: boolean;
+  chart_id: string;
+  title?: string;
+  evaluable: boolean;
+  user_action?: string;
+  canonical_action?: string;
+  matched_action?: string | null;
+  matched_freq?: number;
+  verdict?: string;
+  primary_action?: string;
+  primary_freq?: number;
+  actions?: ToughChartAction[];
+  note?: string;
+  message?: string;
+  source?: string;
+};
+
+export type RangeAction = { action: string; color: string; freq: number };
+export type RangeCell = { notation: string; actions: RangeAction[] };
+export type CustomRange = {
+  id: string;
+  name: string;
+  folder_id: string | null;
+  position: string;
+  stack_depth: number;
+  game_type: string;
+  grid_data: RangeCell[][];
+  color_palette: Record<string, string>;
+  created_at: string;
+  updated_at: string;
+};
+export type RangeFolder = {
+  id: string;
+  name: string;
+  parent_id: string | null;
+  sort_order: number;
+  created_at: string;
+};
+export type ChartOverride = {
+  chart_id: string;
+  grid_data: RangeCell[][];
+  color_palette: Record<string, string>;
+  updated_at: string;
+};
 
 /** Minimal detail shell so the drawer can show list cards while full hand loads. */
 export function handSummaryToDetailPreview(summary: HandSummary): HandDetail {
@@ -1086,4 +1214,78 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+toughCharts: (params?: { category?: string; hero?: string; villain?: string; stack_bb?: number; source?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.category) q.set("category", params.category);
+    if (params?.hero) q.set("hero", params.hero);
+    if (params?.villain) q.set("villain", params.villain);
+    if (params?.stack_bb != null) q.set("stack_bb", String(params.stack_bb));
+    if (params?.source) q.set("source", params.source);
+    const suffix = q.toString() ? `?${q}` : "";
+    return apiFetch<ToughChartsListResult>(`/api/theory/tough${suffix}`);
+  },
+  toughChart: (id: string) => apiFetch<ToughChartDetail>(`/api/theory/tough/${encodeURIComponent(id)}`),
+  toughEvaluate: (body: { chart_id: string; action: string }) =>
+    apiFetch<ToughEvaluateResult>("/api/theory/tough/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  // --- Range Editor & Overrides Endpoints ---
+  getChartOverride: (chartId: string) =>
+    apiFetch<{ ok: boolean; override: ChartOverride }>(`/api/ranges/overrides/${encodeURIComponent(chartId)}`),
+  saveChartOverride: (chartId: string, gridData: any[], colorPalette: Record<string, string>) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/overrides/${encodeURIComponent(chartId)}`, {
+      method: "POST",
+      body: JSON.stringify({ grid_data: gridData, color_palette: colorPalette }),
+    }),
+  deleteChartOverride: (chartId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/overrides/${encodeURIComponent(chartId)}`, {
+      method: "DELETE",
+    }),
+  getFolders: () =>
+    apiFetch<{ ok: boolean; folders: RangeFolder[] }>("/api/ranges/folders"),
+  createFolder: (name: string, parentId?: string | null) =>
+    apiFetch<{ ok: boolean; folder: RangeFolder }>("/api/ranges/folders", {
+      method: "POST",
+      body: JSON.stringify({ name, parent_id: parentId }),
+    }),
+  renameFolder: (folderId: string, name: string) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/folders/${encodeURIComponent(folderId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name }),
+    }),
+  deleteFolder: (folderId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/folders/${encodeURIComponent(folderId)}`, {
+      method: "DELETE",
+    }),
+  getRanges: (folderId?: string | null) => {
+    const q = folderId ? `?folder_id=${encodeURIComponent(folderId)}` : "";
+    return apiFetch<{ ok: boolean; ranges: CustomRange[] }>(`/api/ranges${q}`);
+  },
+  createRange: (rangeData: Omit<CustomRange, "id" | "created_at" | "updated_at">) =>
+    apiFetch<{ ok: boolean; range: CustomRange }>("/api/ranges", {
+      method: "POST",
+      body: JSON.stringify(rangeData),
+    }),
+  getRange: (rangeId: string) =>
+    apiFetch<{ ok: boolean; range: CustomRange }>(`/api/ranges/${encodeURIComponent(rangeId)}`),
+  updateRange: (rangeId: string, rangeData: Omit<CustomRange, "id" | "created_at" | "updated_at">) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/${encodeURIComponent(rangeId)}`, {
+      method: "PUT",
+      body: JSON.stringify(rangeData),
+    }),
+  deleteRange: (rangeId: string) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/${encodeURIComponent(rangeId)}`, {
+      method: "DELETE",
+    }),
+  duplicateRange: (rangeId: string) =>
+    apiFetch<{ ok: boolean; range: CustomRange }>(`/api/ranges/${encodeURIComponent(rangeId)}/duplicate`, {
+      method: "POST",
+    }),
+  moveRange: (rangeId: string, folderId: string | null) =>
+    apiFetch<{ ok: boolean }>(`/api/ranges/${encodeURIComponent(rangeId)}/move`, {
+      method: "PUT",
+      body: JSON.stringify({ folder_id: folderId }),
+    }),
 };
+

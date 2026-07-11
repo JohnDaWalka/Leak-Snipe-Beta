@@ -525,6 +525,7 @@ function App() {
                         <th>Date</th>
                         <th>Site</th>
                         <th>Cards</th>
+                        <th>Board</th>
                         <th>Pos</th>
                         <th>Result</th>
                         <th className="col-replay" aria-label="Replay" />
@@ -533,14 +534,14 @@ function App() {
                     <tbody>
                       {handsLoading && hands.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="table-loading-hint">
+                          <td colSpan={7} className="table-loading-hint">
                             Loading hands…
                           </td>
                         </tr>
                       ) : null}
                       {!handsLoading && hands.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="table-loading-hint">
+                          <td colSpan={7} className="table-loading-hint">
                             {sidecarOnline === false
                               ? "Sidecar offline — start it with the banner above, then click Refresh."
                               : "No hands yet — add watch folders in Settings and run Scan Now."}
@@ -556,6 +557,25 @@ function App() {
                           <td>{formatDate(hand.date)}</td>
                           <td>{hand.site}</td>
                           <td className="mono">{hand.hero_cards || "—"}</td>
+                          <td className="mono board-cards-cell">
+                            {hand.board_cards && hand.board_cards.length > 0 ? (
+                              <div className="mini-board-cards">
+                                {hand.board_cards.map((card, idx) => {
+                                  const rank = card.slice(0, -1);
+                                  const suit = card.slice(-1).toLowerCase();
+                                  const suitSym = suit === "s" ? "♠" : suit === "h" ? "♥" : suit === "d" ? "♦" : suit === "c" ? "♣" : "?";
+                                  const color = (suit === "h" || suit === "d") ? "#f43f5e" : "#cbd5e1";
+                                  return (
+                                    <span key={idx} className="mini-card" style={{ color }}>
+                                      {rank}{suitSym}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <span className="muted">—</span>
+                            )}
+                          </td>
                           <td>{hand.hero_position || "—"}</td>
                           <td
                             className={

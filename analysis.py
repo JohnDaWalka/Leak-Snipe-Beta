@@ -529,12 +529,19 @@ def player_stats_payload(
     settings: Dict[str, Any],
     db: Any,
     hands: Optional[List[Hand]] = None,
+    all_stats: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Return HUD stats for one opponent, using DB cache when available."""
     cached = db.get_player_type(name)
     if cached and cached.get("hands", 0) > 0:
         pos_stats = db.get_player_position_stats(name)
-        three_bet = _player_three_bet_pct(name, hands, settings) if hands is not None else 0.0
+        three_bet = 0.0
+        if all_stats is not None:
+            match = next((p for p in all_stats if p["name"] == name), None)
+            if match:
+                three_bet = match.get("three_bet", 0.0)
+        elif hands is not None:
+            three_bet = _player_three_bet_pct(name, hands, settings)
         return {
             "name": name,
             "hands": cached["hands"],
@@ -551,10 +558,11 @@ def player_stats_payload(
             "cached": True,
         }
 
-    if hands is None:
-        hands = db.get_all_hands()
-    analyzer = PlayerAnalyzer(settings)
-    all_stats = analyzer.apply_manual_overrides(analyzer.analyze_players(hands), db)
+    if all_stats is None:
+        if hands is None:
+            hands = db.get_all_hands()
+        analyzer = PlayerAnalyzer(settings)
+        all_stats = analyzer.apply_manual_overrides(analyzer.analyze_players(hands), db)
     match = next((p for p in all_stats if p["name"] == name), None)
     if not match:
         return {

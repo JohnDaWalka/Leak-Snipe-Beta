@@ -8,11 +8,19 @@ import {
   type ValueNetResult,
 } from "../lib/api";
 import { RangeStudio } from "./RangeStudio";
+import { ToughChartsPanel } from "./ToughChartsPanel";
+import { RangeEditor } from "./RangeEditor";
+import { RangeTrainer } from "./RangeTrainer";
 
 const DEPTHS = [5, 10, 25, 35, 50, 75, 100] as const;
 const POSITIONS = ["UTG", "MP", "CO", "BTN", "SB", "BB"] as const;
 
 export function TheoryPanel() {
+  const [theoryTab, setTheoryTab] = useState<"cfr" | "tough" | "editor" | "trainer">("cfr");
+  const [editChartId, setEditChartId] = useState<string | null>(null);
+  const [editChartTitle, setEditChartTitle] = useState("");
+  const [editChartActions, setEditChartActions] = useState<{ name: string; freq: number }[]>([]);
+  const [refreshToggle, setRefreshToggle] = useState(false);
   const [games, setGames] = useState<TheoryGame[]>([]);
   const [depths, setDepths] = useState<number[]>([...DEPTHS]);
   const [stackBb, setStackBb] = useState<number>(25);
@@ -166,6 +174,62 @@ export function TheoryPanel() {
 
       {error && <div className="error-banner">{error}</div>}
 
+      <div className="theory-subtabs">
+        <button
+          type="button"
+          className={`depth-tab${theoryTab === "cfr" ? " active" : ""}`}
+          onClick={() => setTheoryTab("cfr")}
+        >
+          CFR+ charts
+        </button>
+        <button
+          type="button"
+          className={`depth-tab${theoryTab === "tough" ? " active" : ""}`}
+          onClick={() => setTheoryTab("tough")}
+        >
+          Strategy Charts
+        </button>
+        <button
+          type="button"
+          className={`depth-tab${theoryTab === "trainer" ? " active" : ""}`}
+          onClick={() => setTheoryTab("trainer")}
+        >
+          Range Trainer
+        </button>
+        {theoryTab === "editor" && (
+          <button type="button" className="depth-tab active" disabled>
+            Range Editor
+          </button>
+        )}
+      </div>
+
+      {theoryTab === "editor" ? (
+        <RangeEditor
+          chartId={editChartId}
+          rangeName={editChartTitle}
+          initialActions={editChartActions}
+          onClose={() => setTheoryTab("tough")}
+          onSaveSuccess={() => setRefreshToggle((prev) => !prev)}
+        />
+      ) : theoryTab === "trainer" ? (
+        <RangeTrainer />
+      ) : theoryTab === "tough" ? (
+        <ToughChartsPanel
+          refreshToggle={refreshToggle}
+          onOpenCfr={(nextStackBb, nextPosition) => {
+            setTheoryTab("cfr");
+            setStackBb(nextStackBb);
+            setPosition(nextPosition);
+          }}
+          onEditRange={(chartId, title, actions) => {
+            setEditChartId(chartId);
+            setEditChartTitle(title);
+            setEditChartActions(actions);
+            setTheoryTab("editor");
+          }}
+        />
+      ) : (
+        <>
       <section className="panel-card theory-config">
         <h3>MTT config</h3>
         <div className="theory-config-row">
@@ -356,6 +420,8 @@ export function TheoryPanel() {
           {trainMsg && <p className="success-text">{trainMsg}</p>}
         </section>
       </div>
+        </>
+      )}
     </div>
   );
 }

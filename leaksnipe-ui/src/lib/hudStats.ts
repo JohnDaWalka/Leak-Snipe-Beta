@@ -1,7 +1,7 @@
 export type StatTone = "good" | "warn" | "bad" | "neutral";
 
-export function statTone(stat: string, value: number): StatTone {
-  if (!value) return "neutral";
+export function statTone(stat: string, value: number | null | undefined): StatTone {
+  if (value === undefined || value === null || isNaN(value)) return "neutral";
   if (stat === "vpip") {
     if (value >= 15 && value <= 28) return "good";
     if ((value >= 10 && value < 15) || (value > 28 && value <= 35)) return "warn";
@@ -40,7 +40,7 @@ export function typeClass(playerType: string): string {
   return `hud-type-${key}`;
 }
 
-export function formatStat(value: number, suffix = ""): string {
-  if (!value) return "–";
+export function formatStat(value: number | null | undefined, suffix = ""): string {
+  if (value === undefined || value === null || isNaN(value)) return "–";
   return suffix ? `${Math.round(value)}${suffix}` : value.toFixed(1);
 }

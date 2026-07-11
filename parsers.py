@@ -4,9 +4,11 @@ Supports CoinPoker, BetACR (WPN), GGPoker, ClubGG, PokerStars, 888poker,
 Ignition/Bovada, and Replay Poker hand history formats.
 """
 
+import gzip
+import json
 import re
 import logging
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 from datetime import datetime
 
 try:
@@ -29,6 +31,29 @@ except ImportError:
     _SITE_TZ_MAP = {}
 
 from models import Hand
+
+_COINPOKER_PIPE_RE = re.compile(r"SendMessageToPipe - (\{.*\})\s*$")
+_COINPOKER_LOG_TS_RE = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+_COINPOKER_JSON_DETECT_RE = re.compile(
+    r'"Cmd"\s*:\s*"game\.(seat|pre_hand_start_info|hole_cards)"'
+)
+_COINPOKER_SUIT_MAP = {
+    "CLUBS": "c", "DIAMONDS": "d", "HEARTS": "h", "SPADES": "s",
+}
+_COINPOKER_RANK_MAP = {
+    "TWO": "2", "THREE": "3", "FOUR": "4", "FIVE": "5", "SIX": "6",
+    "SEVEN": "7", "EIGHT": "8", "NINE": "9", "TEN": "T",
+    "JACK": "J", "QUEEN": "Q", "KING": "K", "ACE": "A",
+}
+_COINPOKER_ROUND_TO_STREET = {
+    "ANTE": "Preflop", "PREFLOP": "Preflop", "BLINDS": "Preflop",
+    "FLOP": "Flop", "TURN": "Turn", "RIVER": "River",
+}
+_COINPOKER_CAPTION_TO_ACTION = {
+    "ANTE": "post", "SB": "post", "BB": "post",
+    "FOLD": "fold", "CHECK": "check", "CALL": "call",
+    "BET": "bet", "RAISE": "raise", "ALLIN": "raise",
+}
 
 
 def _parse_hand_datetime(dt_str: str, tz_suffix: str = "",
@@ -103,9 +128,16 @@ class HandParser:
                 return alias
         return self._hero_candidates(site_label)[0] if self._hero_candidates(site_label) else ""
 
+    @staticmethod
+    def is_coinpoker_json_log(text: str) -> bool:
+        """Return True when content is CoinPoker Unity pipe JSON (main.log / table_*.log)."""
+        return bool(_COINPOKER_JSON_DETECT_RE.search(text))
+
     def detect_site(self, text: str) -> Optional[str]:
         """Detect which poker site the hand is from based on text content."""
         stripped_text = text.lstrip()
+        if self.is_coinpoker_json_log(text):
+            return "CoinPoker"
         if stripped_text.startswith("<?xml") or "<HandHistory" in text:
             site_match = re.search(r"<Site>([^<]+)</Site>", text, re.IGNORECASE)
             if site_match:
@@ -195,12 +227,19 @@ class HandParser:
             hands.append("\n".join(current))
         return hands
 
+    @staticmethod
+    def _read_file_text(filepath: str) -> str:
+        if filepath.lower().endswith(".gz"):
+            with gzip.open(filepath, "rt", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
     def parse_file(self, filepath: str, site: str) -> List[Hand]:
         """Parse a hand history file and return list of Hand objects."""
         results = []
         try:
-            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
-                content = f.read()
+            content = self._read_file_text(filepath)
         except Exception:
             return results
         if not content.strip():
@@ -208,6 +247,8 @@ class HandParser:
         detected = self.detect_site(content)
         if detected is None:
             return results
+        if detected == "CoinPoker" and self.is_coinpoker_json_log(content):
+            return self.parse_coinpoker_json_log(content)
         raw_hands = self.split_hands(content, detected)
         for raw in raw_hands:
             try:
@@ -256,6 +297,376 @@ class HandParser:
 
         return None
 
+    def parse_coinpoker_json_log(self, content: str) -> List[Hand]:
+        """Parse CoinPoker Unity pipe JSON logs (main.log, table_*.log)."""
+        return self._build_coinpoker_hands(self._extract_coinpoker_events(content))
+
+    def parse_coinpoker_json_logs(self, contents: List[str]) -> List[Hand]:
+        """Parse a chain of CoinPoker log segments (oldest -> newest) as one stream.
+
+        CoinPoker rotates its log (main.log -> main.1.log.gz -> ...). A single hand
+        can straddle a rotation boundary (e.g. game.hole_cards in the rotated
+        main.1.log.gz, but game.winnerInfo/result in the live main.log). Parsing each
+        segment independently loses the hole cards; concatenating the segments' events
+        and grouping by gameHandId reassembles the hand complete.
+        """
+        events: List[Dict[str, Any]] = []
+        for content in contents:
+            events.extend(self._extract_coinpoker_events(content))
+        return self._build_coinpoker_hands(events)
+
+    def _build_coinpoker_hands(self, events: List[Dict[str, Any]]) -> List[Hand]:
+        """Group extracted CoinPoker events by hand id and build Hand objects."""
+        if not events:
+            return []
+
+        hero = self._resolve_hero("", "CoinPoker")
+        if not hero:
+            hero = self.settings.get("hero_names", {}).get("CoinPoker", "")
+
+        by_hand: Dict[str, List[Dict[str, Any]]] = {}
+        last_key = ""
+        for event in events:
+            bean = event.get("bean") or {}
+            hand_key = self._coinpoker_event_hand_key(bean)
+            if not hand_key:
+                # Some events (e.g. game.rabbit_run_new, the all-in run-it-out board)
+                # omit gameHandId; attribute them to the hand currently in progress
+                # instead of dropping them into a junk bucket.
+                hand_key = last_key
+            if not hand_key:
+                continue
+            last_key = hand_key
+            by_hand.setdefault(str(hand_key), []).append(event)
+
+        results: List[Hand] = []
+        for hand_key in sorted(by_hand.keys()):
+            hand_events = by_hand[hand_key]
+            cmds = {ev["cmd"] for ev in hand_events}
+            complete = "game.winnerInfo" in cmds or "game.reset_data" in cmds
+            has_structure = (
+                "game.pre_hand_start_info" in cmds
+                or "game.game_start" in cmds
+                or "game.game_alldata" in cmds
+                or ("game.seat" in cmds and "game.seatInfo" in cmds)
+            )
+            # Live import: show the hand as soon as hero hole cards are dealt.
+            live_dealt = "game.hole_cards" in cmds and has_structure
+            if not complete and not live_dealt:
+                continue
+            try:
+                hand = self._build_coinpoker_hand_from_events(hand_events, hero)
+            except Exception as exc:
+                logging.error("CoinPoker JSON hand %s parse error: %s", hand_key, exc)
+                continue
+            if hand and hand.hand_id:
+                if not complete:
+                    hand.tags = ["in_progress"]
+                results.append(hand)
+        return results
+
+    def _extract_coinpoker_events(self, content: str) -> List[Dict[str, Any]]:
+        events: List[Dict[str, Any]] = []
+        for line in content.splitlines():
+            pipe_match = _COINPOKER_PIPE_RE.search(line)
+            if not pipe_match:
+                continue
+            try:
+                outer = json.loads(pipe_match.group(1))
+            except json.JSONDecodeError:
+                continue
+            if outer.get("EventName") != "extension_event":
+                continue
+            data = outer.get("Data") or {}
+            cmd_bean = data.get("cmd_bean") or {}
+            cmd = cmd_bean.get("Cmd", "")
+            if not cmd.startswith("game."):
+                continue
+            bean_raw = cmd_bean.get("BeanData") or ""
+            try:
+                bean = json.loads(bean_raw) if bean_raw else {}
+            except json.JSONDecodeError:
+                bean = {}
+            ts_match = _COINPOKER_LOG_TS_RE.search(line)
+            events.append({
+                "cmd": cmd,
+                "bean": bean,
+                "room": cmd_bean.get("RoomName") or data.get("room_name") or "",
+                "timestamp": ts_match.group(1) if ts_match else "",
+                "line": line,
+            })
+        return events
+
+    @staticmethod
+    def _coinpoker_event_hand_key(bean: Dict[str, Any]) -> str:
+        hand_key = bean.get("gameHandId") or bean.get("gameId")
+        if hand_key:
+            return str(hand_key).split(".")[0]
+        init = bean.get("gameInitResponseData") or {}
+        nested = init.get("gameHandId") or init.get("gameId")
+        return str(nested).split(".")[0] if nested else ""
+
+    @staticmethod
+    def _coinpoker_ingest_seats(
+        h: Hand, seat_to_name: Dict[int, str], seats: List[Any], hero: str,
+    ) -> None:
+        for seat in seats:
+            if not isinstance(seat, dict):
+                continue
+            seat_id = int(seat.get("seatId") or 0)
+            name = str(seat.get("userName") or "").strip()
+            if not seat_id or not name:
+                continue
+            stack = float(seat.get("userChips") or 0.0)
+            seat_to_name[seat_id] = name
+            h.players[seat_id] = {
+                "name": name,
+                "stack": stack,
+                "is_hero": name == hero,
+            }
+
+    @staticmethod
+    def _coinpoker_card_str(card: Dict[str, Any]) -> str:
+        suit = _COINPOKER_SUIT_MAP.get(str(card.get("suit", "")).upper(), "?")
+        rank = _COINPOKER_RANK_MAP.get(str(card.get("value", "")).upper(), "?")
+        return f"{rank}{suit}"
+
+    @staticmethod
+    def _coinpoker_parse_room(room_name: str) -> Tuple[str, str, str]:
+        room = (room_name or "").strip()
+        if not room:
+            return "", "", ""
+        match = re.search(r"^[₮$€]?(\d+(?:\.\d+)?)\s+(.+?)\s+(\d+)$", room)
+        if match:
+            return match.group(3), f"{match.group(1)}+0", room
+        table_match = re.search(r"(\d+)\s*$", room)
+        table_id = table_match.group(1) if table_match else ""
+        return table_id, "", room
+
+    def _build_coinpoker_hand_from_events(
+        self, events: List[Dict[str, Any]], hero: str,
+    ) -> Optional[Hand]:
+        h = Hand()
+        h.site = "CoinPoker"
+        h.game_type = "NLHE"
+        h.is_tournament = True
+
+        streets_map: Dict[str, Dict[str, Any]] = {
+            "Preflop": {"name": "Preflop", "cards": [], "actions": []},
+        }
+        current_round = "PREFLOP"
+        seat_to_name: Dict[int, str] = {}
+        board_cards: List[str] = []
+        raw_lines: List[str] = []
+
+        for event in events:
+            cmd = event["cmd"]
+            bean = event.get("bean") or {}
+            room = event.get("room") or ""
+            ts = event.get("timestamp") or ""
+            raw_lines.append(event.get("line") or "")
+
+            if room and not h.table_name:
+                table_id, buy_in, table_name = self._coinpoker_parse_room(room)
+                h.table_name = table_name
+                if table_id:
+                    h.tournament_id = table_id
+                if buy_in:
+                    h.buy_in = buy_in
+
+            if not h.hand_id:
+                hand_num = self._coinpoker_event_hand_key(bean)
+                if hand_num:
+                    h.hand_id = f"CP_{hand_num}"
+
+            if cmd == "game.pre_hand_start_info":
+                hand_num = str(bean.get("gameHandId") or bean.get("gameId") or "")
+                if hand_num:
+                    h.hand_id = f"CP_{hand_num.split('.')[0]}"
+                h.button_seat = int(bean.get("dealerSeatId") or 0)
+                if ts:
+                    # main.log timestamps are local PC time (no TZ suffix).
+                    h.date = _parse_hand_datetime(ts, "", default_tz_key="")
+            elif cmd == "game.game_alldata":
+                init = bean.get("gameInitResponseData") or {}
+                if not h.button_seat and init.get("dealerSeatId"):
+                    h.button_seat = int(init.get("dealerSeatId") or 0)
+                if not h.tournament_id and init.get("tableId"):
+                    h.tournament_id = str(int(float(init.get("tableId"))))
+                seat_block = (
+                    bean.get("seatInfoRsponseData")
+                    or bean.get("seatInfoResponseData")
+                    or {}
+                )
+                self._coinpoker_ingest_seats(
+                    h,
+                    seat_to_name,
+                    seat_block.get("seatResponseDataList") or [],
+                    hero,
+                )
+                cards = [
+                    self._coinpoker_card_str(card)
+                    for card in (bean.get("playerCards") or [])
+                    if isinstance(card, dict)
+                ]
+                if cards and not h.hero_cards:
+                    h.hero_cards = " ".join(cards)
+            elif cmd == "game.seatInfo":
+                self._coinpoker_ingest_seats(
+                    h,
+                    seat_to_name,
+                    bean.get("seatResponseDataList") or [],
+                    hero,
+                )
+            elif cmd == "game.potInfo":
+                round_name = str(bean.get("roundName") or "").upper()
+                if round_name:
+                    current_round = round_name
+                pot_amt = float(bean.get("totalPotAmount") or 0.0)
+                if pot_amt > h.pot:
+                    h.pot = pot_amt
+            elif cmd == "game.seat":
+                caption = str(bean.get("caption") or bean.get("newCaption") or "").strip()
+                action_key = caption.upper()
+                action = _COINPOKER_CAPTION_TO_ACTION.get(action_key)
+                if not action:
+                    continue
+                street_name = _COINPOKER_ROUND_TO_STREET.get(current_round, "Preflop")
+                if street_name not in streets_map:
+                    streets_map[street_name] = {
+                        "name": street_name, "cards": [], "actions": [],
+                    }
+                player = str(bean.get("userName") or "").strip()
+                amount = float(bean.get("betAmout") or bean.get("betAmount") or 0.0)
+                seat_id = int(bean.get("seatId") or 0)
+                if seat_id and player:
+                    seat_to_name[seat_id] = player
+                    stack = float(bean.get("userChips") or 0.0)
+                    prev = h.players.get(seat_id) or {}
+                    h.players[seat_id] = {
+                        "name": player,
+                        "stack": stack or float(prev.get("stack") or 0.0),
+                        "is_hero": player == hero,
+                    }
+                streets_map[street_name]["actions"].append({
+                    "player": player,
+                    "action": action,
+                    "amount": amount,
+                })
+            elif cmd == "game.hole_cards":
+                cards = [
+                    self._coinpoker_card_str(card)
+                    for card in (bean.get("holeCards") or [])
+                    if isinstance(card, dict)
+                ]
+                if cards:
+                    h.hero_cards = " ".join(cards)
+            elif cmd == "game.dealer_cards":
+                dealer_cards = bean.get("dealerCards") or {}
+                for street_key, street_label in (
+                    ("FLOP", "Flop"), ("TURN", "Turn"), ("RIVER", "River"),
+                ):
+                    street_cards = dealer_cards.get(street_key)
+                    if not street_cards:
+                        continue
+                    cards = [
+                        self._coinpoker_card_str(card)
+                        for card in street_cards
+                        if isinstance(card, dict)
+                    ]
+                    if not cards:
+                        continue
+                    if street_label not in streets_map:
+                        streets_map[street_label] = {
+                            "name": street_label, "cards": cards, "actions": [],
+                        }
+                    else:
+                        streets_map[street_label]["cards"] = cards
+                    for card in cards:
+                        if card not in board_cards:
+                            board_cards.append(card)
+            elif cmd == "game.return_chips":
+                seat_id = int(bean.get("seatId") or 0)
+                amount = float(bean.get("chipsToReturn") or 0.0)
+                player = seat_to_name.get(seat_id, "")
+                if player and amount > 0:
+                    street_name = _COINPOKER_ROUND_TO_STREET.get(current_round, "Preflop")
+                    if street_name not in streets_map:
+                        streets_map[street_name] = {
+                            "name": street_name, "cards": [], "actions": [],
+                        }
+                    streets_map[street_name]["actions"].append({
+                        "player": player,
+                        "action": "return",
+                        "amount": amount,
+                    })
+            elif cmd == "game.winnerInfo":
+                for pot in bean.get("winnerDataList") or []:
+                    if not isinstance(pot, dict):
+                        continue
+                    details = pot.get("winnerDetails") or {}
+                    for winner in details.get("winnerList") or []:
+                        if not isinstance(winner, dict):
+                            continue
+                        name = str(winner.get("playerName") or "").strip()
+                        amount = float(
+                            winner.get("actualWinAmount")
+                            or winner.get("winAmountFromPot")
+                            or 0.0
+                        )
+                        if name and amount > 0:
+                            h.winners.append({"name": name, "amount": amount})
+                pot_amt = float(bean.get("cumulativePotAmount") or 0.0)
+                if not pot_amt:
+                    for pot in bean.get("winnerDataList") or []:
+                        if isinstance(pot, dict):
+                            pot_amt = max(
+                                pot_amt,
+                                float(pot.get("potAmountAfterRake") or pot.get("potAmount") or 0.0),
+                            )
+                if pot_amt > h.pot:
+                    h.pot = pot_amt
+            elif cmd == "game.cumulativeWinnerInfo":
+                pot_amt = float(bean.get("cumulativePotAmountWithoutRake") or 0.0)
+                if not pot_amt:
+                    pot_amt = float(bean.get("cumulativePotAmount") or 0.0)
+                if pot_amt > h.pot:
+                    h.pot = pot_amt
+                for winner in bean.get("winnersData") or []:
+                    if not isinstance(winner, dict):
+                        continue
+                    name = str(winner.get("userName") or "").strip()
+                    profit = float(winner.get("cumulativeProfitLoss") or 0.0)
+                    if name == hero:
+                        h.hero_won = profit
+                        break
+
+        if h.max_seats == 0 and h.players:
+            h.max_seats = len(h.players)
+
+        street_order = ["Preflop", "Flop", "Turn", "River", "Showdown"]
+        h.streets = [streets_map[name] for name in street_order if name in streets_map]
+        h.board_cards = board_cards or self._collect_board_from_streets(h.streets)
+        h.hero_player = hero
+        h.raw_text = "\n".join(raw_lines)
+
+        if h.hero_won == 0.0 and hero:
+            hero_profit = None
+            for event in events:
+                if event["cmd"] != "game.cumulativeWinnerInfo":
+                    continue
+                for winner in (event.get("bean") or {}).get("winnersData") or []:
+                    if str(winner.get("userName") or "").strip() == hero:
+                        hero_profit = float(winner.get("cumulativeProfitLoss") or 0.0)
+                        break
+            if hero_profit is not None:
+                h.hero_won = hero_profit
+            else:
+                h.hero_won = self._calc_hero_result(h, hero)
+
+        h.hero_position = self._calc_position(h, hero)
+        return h if h.hand_id else None
+
     def _parse_coinpoker(self, text: str) -> Optional[Hand]:
         """Parse CoinPoker hand history format."""
         h = Hand()
@@ -279,8 +690,9 @@ class HandParser:
         h.game_type = "NLHE"
         dm = re.search(r"(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s*([A-Z]{2,4})?", header)
         if dm:
-            h.date = _parse_hand_datetime(dm.group(1), dm.group(2) or "",
-                                          default_tz_key="UTC")
+            h.date = _parse_hand_datetime(
+                dm.group(1), dm.group(2) or "", default_tz_key="",
+            )
         else:
             h.date = datetime.now()
 

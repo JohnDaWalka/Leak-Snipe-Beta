@@ -92,13 +92,24 @@ export function LiveHudOverlay() {
     };
   }, []);
 
+  const resolveHudSite = useCallback((cfg: Settings | null, tableTitle?: string) => {
+    const preset = (cfg?.hud_site_preset as string | undefined) ?? "auto";
+    if (preset && preset !== "auto" && preset !== "off") {
+      return preset;
+    }
+    const tl = (tableTitle ?? "").toLowerCase();
+    if (tl.includes("coinpoker")) return "CoinPoker";
+    if (tl.includes("acr") || tl.includes("winning")) return "BetACR";
+    if (tl.includes("ggpoker") || tl.includes("gg poker")) return "GGPoker";
+    return undefined;
+  }, []);
+
   const refreshHand = useCallback(async () => {
     try {
       await waitForBackend();
-      const [live, cfg] = await Promise.all([
-        api.liveCurrentHand("BetACR"),
-        api.settings(),
-      ]);
+      const cfg = await api.settings();
+      const site = resolveHudSite(cfg, bounds?.title);
+      const live = await api.liveCurrentHand(site);
       setSettings(cfg);
       setHand(live);
 
@@ -124,7 +135,7 @@ export function LiveHudOverlay() {
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "HUD refresh failed");
     }
-  }, [bounds]);
+  }, [bounds, resolveHudSite]);
 
   useEffect(() => {
     void refreshHand();

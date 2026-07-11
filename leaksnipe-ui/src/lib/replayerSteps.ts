@@ -99,10 +99,16 @@ export function buildReplayerSteps(hand: HandDetail): ReplayerStep[] {
 
 export function parseShownCards(rawText: string): Record<string, string> {
   const shown: Record<string, string> = {};
-  const re = /([\w ]+?)\s+shows?\s+\[([^\]]+)\]/gi;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(rawText)) !== null) {
-    shown[match[1].trim()] = match[2].trim();
+  const lines = rawText.split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/^([\s\S]+?)\s+shows?\s+\[([^\]]+)\]/i);
+    if (match) {
+      let name = match[1].trim();
+      name = name.replace(/^Seat\s+\d+:\s*/i, "").replace(/:$/, "").trim();
+      if (name) {
+        shown[name] = match[2].trim();
+      }
+    }
   }
   return shown;
 }

@@ -1,16 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  copyToClipboard,
   formatAiProviderFromStatus,
+  formatHandForClipboard,
+  isOllamaProviderRef,
   type AiAnalysis,
   type AiStatus,
   type HandDetail,
+  type MRatioResult,
 } from "../lib/api";
 import { HandAnalysisView } from "./HandAnalysisView";
 import { HandReplayer } from "./HandReplayer";
 import { OpponentHudPanel } from "./OpponentHud";
 import { AiVisualGenerator, type VisualPreset } from "./AiVisualGenerator";
 import { parseCardList, PlayingCard } from "./PlayingCard";
+import { parseShownCards } from "../lib/replayerSteps";
 
 export type PositionContext = {
   vpip: number;
@@ -26,13 +31,13 @@ type HandDetailPanelProps = {
   sessionVpip?: number;
   sessionPfr?: number;
   loading?: boolean;
-  error?: string | null;
-  onRetry?: () => void;
+  autoAnalyze?: boolean;
+  onAutoAnalyzeComplete?: () => void;
 };
 
-function formatWon(amount: number, isTournament: boolean) {
-  if (isTournament) return `${amount >= 0 ? "+" : ""}${amount.toLocaleString()} chips`;
-  return `${amount >= 0 ? "+" : ""}$${amount.toFixed(2)}`;
+function formatWon(amount: number | null | undefined, isTournament: boolean) {
+  if (amount === undefined || amount === null || isNaN(amount)) return "—";
+  return `${amount >= 0 ? "+" : ""}${isTournament ? `${amount.toLocaleString()} chips` : `$${amount.toFixed(2)}`}`;
 }
 
 export function HandDetailPanel({
@@ -43,8 +48,8 @@ export function HandDetailPanel({
   sessionVpip,
   sessionPfr,
   loading,
-  error,
-  onRetry,
+  autoAnalyze,
+  onAutoAnalyzeComplete,
 }: HandDetailPanelProps) {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysis, setAnalysis] = useState<AiAnalysis | null>(null);
@@ -52,29 +57,19 @@ export function HandDetailPanel({
   const [aiStatus, setAiStatus] = useState<AiStatus | null>(null);
   const [datasetHands, setDatasetHands] = useState<number | null>(null);
   const [webContextUsed, setWebContextUsed] = useState(false);
+  const [handMRatio, setHandMRatio] = useState<MRatioResult | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const autoTriggeredRef = useRef(false);
 
-  useEffect(() => {
-    api.aiStatus().then((s) => {
-      setAiStatus(s);
-      if (s.dataset_context_hands != null) setDatasetHands(s.dataset_context_hands);
-    }).catch(() => setAiStatus(null));
-  }, []);
+  const shownCards = useMemo(() => parseShownCards(hand?.raw_text ?? ""), [hand?.raw_text]);
 
-  if (!hand) {
-    return (
-      <div className="detail-panel detail-panel-loading">
-        <div className="detail-skeleton" />
-        <p className="muted">Loading hand…</p>
-      </div>
-    );
-  }
-
+  // runAi defined at top level (before any early returns or effects) so auto-trigger can always call it
   const runAi = async () => {
+    if (!hand) return;
     setAnalyzing(true);
     setAiError(null);
     try {
-      const freshStatus = await api.aiStatus();
-      setAiStatus(freshStatus);
       const res = await api.analyzeHand(hand.hand_id);
       if (res.dataset_context_hands != null) setDatasetHands(res.dataset_context_hands);
       setWebContextUsed(Boolean(res.web_context_included ?? res.analysis.web_context_included));
@@ -90,27 +85,69 @@ export function HandDetailPanel({
     }
   };
 
+  useEffect(() => {
+    api.aiStatus().then((s) => {
+      setAiStatus(s);
+      if (s.dataset_context_hands != null) setDatasetHands(s.dataset_context_hands);
+    }).catch(() => setAiStatus(null));
+  }, []);
+
+  useEffect(() => {
+    setHandMRatio(null);
+    setAnalysis(null);
+    setAiError(null);
+    setAnalyzing(false);
+    autoTriggeredRef.current = false;
+    setCopyMessage(null);
+    setCopyError(null);
+    if (!hand?.is_tournament) return;
+    api.handMRatio(hand.hand_id).then(setHandMRatio).catch(() => setHandMRatio(null));
+  }, [hand?.hand_id, hand?.is_tournament]);
+
+  // Auto-run AI analysis when right-click "export to AI" opens the hand
+  useEffect(() => {
+    if (autoAnalyze) {
+      // allow re-trigger if user right-clicks export again on the open hand
+      autoTriggeredRef.current = false;
+    }
+    if (autoAnalyze && hand && !autoTriggeredRef.current) {
+      autoTriggeredRef.current = true;
+      runAi().finally(() => {
+        onAutoAnalyzeComplete?.();
+      });
+    }
+  }, [autoAnalyze, hand?.hand_id]);
+
+  if (loading || !hand) {
+    return (
+      <div className="detail-panel detail-panel-loading">
+        <div className="detail-skeleton" />
+        <p className="muted">Loading hand…</p>
+      </div>
+    );
+  }
+
   const activeProviderLabel = formatAiProviderFromStatus(aiStatus);
-  const analyzingWithOllama =
-    aiStatus?.provider_chain?.[0] === "ollama" ||
-    (aiStatus?.ai_provider_pref === "ollama" &&
-      !aiStatus?.asi1_ready &&
-      Boolean(aiStatus?.ollama_ready));
+  const analyzingWithOllama = isOllamaProviderRef(aiStatus?.llm_provider);
   const datasetContextActive =
     Boolean(aiStatus?.ai_include_dataset_context ?? true) &&
     (datasetHands ?? aiStatus?.dataset_context_hands ?? 0) > 0;
   const webSearchMode = aiStatus?.ai_web_search_mode ?? (aiStatus?.ai_include_web_context === false ? "off" : "on_demand");
   const webContextEnabled = webSearchMode !== "off";
 
-  const heroCards = parseCardList(hand.hero_cards);
-  const boardCards = hand.board_cards ?? [];
-  const boardLoading = Boolean(loading && boardCards.length === 0 && !hand.streets?.length);
+  const heroCards = parseCardList(hand.hero_cards ?? "");
   const opponentNames = Object.values(hand.players ?? {})
-    .filter((p) => !p.is_hero)
+    .filter((p) => p && !p.is_hero && p.name && p.name !== hand.hero_name)
     .map((p) => p.name);
 
-  const board = boardCards.join(" ");
-  const flop = boardCards.slice(0, 3).join(" ");
+  const formatStack = (amount: number | null | undefined) => {
+    if (amount === undefined || amount === null || isNaN(amount)) return "—";
+    if (hand.is_tournament) return `${amount.toLocaleString()} chips`;
+    return `$${amount.toFixed(2)}`;
+  };
+
+  const board = (hand.board_cards ?? []).join(" ");
+  const flop = (hand.board_cards ?? []).slice(0, 3).join(" ");
   const visualPresets: VisualPreset[] = [];
   if (flop) {
     visualPresets.push({
@@ -143,21 +180,50 @@ export function HandDetailPanel({
         </button>
       </div>
 
-      {error ? (
-        <div className="error-banner" role="alert">
-          {error}
-          {onRetry ? (
-            <button type="button" className="ghost-btn small" onClick={onRetry} style={{ marginLeft: "0.5rem" }}>
-              Retry
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
       <button type="button" className="replay-hero-btn" onClick={onOpenReplayer}>
         <span className="replay-hero-icon" aria-hidden>▶</span>
         Replay Hand
       </button>
+
+      <OpponentHudPanel names={opponentNames} title="Opponent Profiles" />
+
+      {/* Players at Table Section */}
+      <div className="table-players-section">
+        <h3 className="section-title">Players at Table</h3>
+        <div className="table-players-list">
+          {Object.entries(hand.players ?? {})
+            .filter(([, p]) => p != null)
+            .map(([seat, p]) => ({ seat: Number(seat), ...p }))
+            .sort((a, b) => a.seat - b.seat)
+            .map((p) => {
+              const pName = p.name ?? "";
+              const cards = p.is_hero ? heroCards : parseCardList(shownCards[pName] ?? "");
+              return (
+                <div key={p.seat} className={`table-player-row ${p.is_hero ? "hero" : ""}`}>
+                  <span className="player-seat">Seat {p.seat}</span>
+                  <span className="player-position-badge" data-pos={p.position}>
+                    {p.position || "—"}
+                  </span>
+                  <span className="player-name" title={pName}>
+                    {pName}
+                  </span>
+                  <span className="player-stack">{formatStack(p.stack)}</span>
+                  <span className="player-cards-show">
+                    {cards.length > 0 ? (
+                      <div className="card-row mini">
+                        {cards.map((c, i) => (
+                          <PlayingCard key={i} card={c} small />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="muted small">—</span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+        </div>
+      </div>
 
       <div className="detail-grid">
         <div className="detail-card">
@@ -182,14 +248,25 @@ export function HandDetailPanel({
             {formatWon(hand.hero_won, hand.is_tournament)}
           </div>
         </div>
-        <div className="detail-card">
+         <div className="detail-card">
           <div className="detail-label">Pot</div>
           <div>
             {hand.is_tournament
-              ? `${hand.pot.toLocaleString()} chips`
-              : `$${hand.pot.toFixed(2)}`}
+              ? `${(hand.pot ?? 0).toLocaleString()} chips`
+              : `$${(hand.pot ?? 0).toFixed(2)}`}
           </div>
         </div>
+        {handMRatio ? (
+          <div className="detail-card" style={{ borderColor: handMRatio.zone_color }}>
+            <div className="detail-label">My M-ratio</div>
+            <div className="detail-value-emphasis" style={{ color: handMRatio.zone_color }}>
+              M {handMRatio.m_ratio.toFixed(2)} · {handMRatio.zone.toUpperCase()}
+            </div>
+            <div className="detail-context muted">
+              Effective M {handMRatio.effective_m.toFixed(2)} · {handMRatio.stack_bb.toFixed(1)}BB
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {sessionVpip != null ? (
@@ -209,35 +286,40 @@ export function HandDetailPanel({
         <div className="card-row">
           {heroCards.length > 0
             ? heroCards.map((c, i) => <PlayingCard key={i} card={c} />)
-            : loading
-              ? <span className="muted">Loading…</span>
-              : <span className="muted">—</span>}
+            : <span className="muted">—</span>}
         </div>
       </div>
 
-      {boardCards.length > 0 ? (
+      {hand.board_cards?.length > 0 ? (
         <div className="detail-cards-row">
           <span className="detail-label">Board</span>
           <div className="card-row">
-            {boardCards.map((c, i) => (
+            {hand.board_cards.map((c, i) => (
               <PlayingCard key={i} card={c} />
             ))}
           </div>
         </div>
-      ) : boardLoading ? (
-        <div className="detail-cards-row">
-          <span className="detail-label">Board</span>
-          <span className="muted">Loading board…</span>
-        </div>
-      ) : null}
-
-      {opponentNames.length > 0 ? (
-        <OpponentHudPanel names={opponentNames} title="Opponents" />
       ) : null}
 
       <div className="detail-actions">
-        <button type="button" className="secondary-btn" onClick={runAi} disabled={analyzing || Boolean(error)}>
+        <button type="button" className="secondary-btn" onClick={runAi} disabled={analyzing}>
           {analyzing ? `Analyzing with ${activeProviderLabel}…` : "AI Coach"}
+        </button>
+        <button
+          type="button"
+          className="ghost-btn"
+          onClick={async () => {
+            if (!hand) return;
+            setCopyMessage(null);
+            setCopyError(null);
+            const text = formatHandForClipboard(hand);
+            const ok = await copyToClipboard(text);
+            if (ok) setCopyMessage("Hand copied to clipboard.");
+            else setCopyError("Clipboard copy failed. Reopen the app after updating, then try again.");
+          }}
+          title="Copy hand (hole cards, board, actions, outcome) to clipboard — pasteable for AI"
+        >
+          Copy for AI
         </button>
         {datasetContextActive ? (
           <span className="muted small">
@@ -260,6 +342,8 @@ export function HandDetailPanel({
       ) : null}
 
       {aiError ? <div className="error-banner">{aiError}</div> : null}
+      {copyError ? <div className="error-banner">{copyError}</div> : null}
+      {copyMessage ? <div className="success-banner">{copyMessage}</div> : null}
       {analysis ? (
         <div className="ai-result">
           <div className="detail-label">AI Coach</div>
@@ -281,26 +365,20 @@ export function HandDetailPanel({
 
       <div className="streets-log">
         <div className="detail-label">Action Log</div>
-        {boardLoading ? (
-          <p className="muted">Loading actions…</p>
-        ) : hand.streets?.length ? (
-          hand.streets.map((street) => (
-            <div key={street.name} className="street-block">
-              <div className="street-name">
-                {street.name}
-                {street.cards?.length ? ` · ${street.cards.join(" ")}` : ""}
-              </div>
-              {street.actions?.map((act, i) => (
-                <div key={i} className="action-line mono">
-                  {act.player}: {act.action}
-                  {act.amount > 0 ? ` $${act.amount.toFixed(2)}` : ""}
-                </div>
-              ))}
+        {hand.streets?.map((street) => (
+          <div key={street.name} className="street-block">
+            <div className="street-name">
+              {street.name}
+              {street.cards?.length ? ` · ${street.cards.join(" ")}` : ""}
             </div>
-          ))
-        ) : (
-          <p className="muted">No action log</p>
-        )}
+            {street.actions?.map((act, i) => (
+              <div key={i} className="action-line mono">
+                {act.player}: {act.action}
+                {act.amount > 0 ? ` $${act.amount.toFixed(2)}` : ""}
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );
