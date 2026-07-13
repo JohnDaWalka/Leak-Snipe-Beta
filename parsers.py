@@ -112,14 +112,16 @@ class HandParser:
     def _resolve_hero(self, text: str, site_label: str) -> str:
         """Pick the hero name that actually played this hand."""
         dealt: List[str] = []
-        for match in re.finditer(r"Dealt to (.+?) \[(.+?)\]", text):
+        for match in re.finditer(r"Dealt to (.+?) \[(.+?)\]", text, re.IGNORECASE):
             name = match.group(1).strip()
             if name and name not in dealt:
                 dealt.append(name)
         if dealt:
+            dealt_lower = [d.lower() for d in dealt]
             for alias in self._hero_candidates(site_label):
-                if alias in dealt:
-                    return alias
+                if alias.lower() in dealt_lower:
+                    idx = dealt_lower.index(alias.lower())
+                    return dealt[idx]
             return dealt[0]
 
         seat_names = set(re.findall(r"Seat \d+: (.+?) \(", text))
@@ -359,12 +361,17 @@ class HandParser:
                     if isinstance(seat, dict) and seat.get("userName"):
                         hand_players.add(str(seat["userName"]).strip())
 
-            # Find matching hero candidate
+            # Find matching hero candidate case-insensitively
             matched_hero = None
+            hand_players_lower = {p.lower() for p in hand_players}
             for c in candidates:
-                if c in hand_players:
-                    matched_hero = c
-                    break
+                if c.lower() in hand_players_lower:
+                    for p in hand_players:
+                        if p.lower() == c.lower():
+                            matched_hero = p
+                            break
+                    if matched_hero:
+                        break
             
             hero = matched_hero if matched_hero else (candidates[0] if candidates else "")
 
