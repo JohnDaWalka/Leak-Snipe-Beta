@@ -53,11 +53,22 @@ function formatHandForClipboard(hand: HandDetail): string {
         parts.push(`Cards: ${street.cards.join(" ")}`);
       }
       street.actions?.forEach((act) => {
-        const amtStr = act.amount > 0 ? ` $${act.amount.toFixed(2)}` : "";
+        const amtStr = act.amount > 0
+          ? (hand.is_tournament ? ` ${act.amount.toLocaleString()}` : ` $${act.amount.toFixed(2)}`)
+          : "";
         parts.push(`${act.player}: ${act.action}${amtStr}`);
       });
     });
   }
+
+  if (hand.winners && hand.winners.length > 0) {
+    parts.push(`\nWinners:`);
+    hand.winners.forEach((w) => {
+      const amtStr = hand.is_tournament ? `${w.amount.toLocaleString()} chips` : `$${w.amount.toFixed(2)}`;
+      parts.push(`${w.name} won ${amtStr}`);
+    });
+  }
+
   return parts.join("\n");
 }
 
@@ -502,7 +513,11 @@ export function HandDetailPanel({
             {street.actions?.map((act, i) => (
               <div key={i} className="action-line mono">
                 {act.player}: {act.action}
-                {act.amount > 0 ? ` $${act.amount.toFixed(2)}` : ""}
+                {act.amount > 0 ? (
+                  hand.is_tournament
+                    ? ` ${act.amount.toLocaleString()}`
+                    : ` $${act.amount.toFixed(2)}`
+                ) : ""}
               </div>
             ))}
           </div>
