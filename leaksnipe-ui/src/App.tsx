@@ -17,6 +17,7 @@ import {
   type Settings,
   type SidecarStatus,
   isDashboardStatsWarming,
+  type TotalsStats,
 } from "./lib/api";
 import type { TabId } from "./types";
 import { AiCoachPanel } from "./components/AiCoachPanel";
@@ -73,7 +74,6 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
   const [totalHands, setTotalHands] = useState(0);
-  const [dbPath, setDbPath] = useState<string | null>(null);
   const [selectedHandId, setSelectedHandId] = useState<string | null>(null);
   const [selectedHand, setSelectedHand] = useState<HandDetail | null>(null);
   const [replayerHand, setReplayerHand] = useState<HandDetail | null>(null);
@@ -85,6 +85,21 @@ function App() {
   const [sidecarStarting, setSidecarStarting] = useState(false);
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null);
 
+  // Filter and Totals state
+  const [siteFilter, setSiteFilter] = useState<string>("");
+  const [tagFilter, setTagFilter] = useState<string>("");
+  const [datePreset, setDatePreset] = useState<string>("all");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [totals, setTotals] = useState<TotalsStats>({
+    total_hands: 0,
+    total_collected: 0,
+    total_lost: 0,
+    net_profit_loss: 0,
+    total_rake: 0,
+  });
+  const [allTags, setAllTags] = useState<string[]>([]);
+
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const handsCountRef = useRef(0);
   const handsAbortRef = useRef<AbortController | null>(null);
@@ -93,9 +108,43 @@ function App() {
   const statsWarmStartedRef = useRef<number | null>(null);
   const STATS_WARM_TIMEOUT_MS = 60_000;
 
+  const formatCurrency = (val: number) => {
+    const abs = Math.abs(val);
+    const prefix = val > 0 ? "+" : val < 0 ? "-" : "";
+    return `${prefix}$${abs.toFixed(2)}`;
+  };
+
+  const getFilterDates = useCallback(() => {
+    if (datePreset === "custom") {
+      return {
+        start: startDate ? new Date(startDate).toISOString() : undefined,
+        end: endDate ? new Date(endDate).toISOString() : undefined,
+      };
+    }
+    const now = new Date();
+    let start: Date | null = null;
+    let end: Date | null = null;
+
+    if (datePreset === "today") {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    } else if (datePreset === "yesterday") {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59, 999);
+    } else if (datePreset === "7days") {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7);
+    } else if (datePreset === "30days") {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
+    }
+
+    return {
+      start: start ? start.toISOString() : undefined,
+      end: end ? end.toISOString() : undefined,
+    };
+  }, [datePreset, startDate, endDate]);
+
   const refreshHands = useCallback(async (silent = false) => {
     const controller = new AbortController();
-    // Silent polls must not abort an in-flight initial/manual load (was leaving handsLoading stuck).
     if (!silent) {
       handsAbortRef.current?.abort();
       handsAbortRef.current = controller;
@@ -106,23 +155,35 @@ function App() {
     const scrollTop = silent ? (tableScrollRef.current?.scrollTop ?? 0) : 0;
     try {
       const signal = controller.signal;
-      const [recentResult, settingsResult, foldersResult, statusResult] =
+      const dates = getFilterDates();
+      const [searchResult, settingsResult, foldersResult, statusResult, tagsResult] =
         await Promise.allSettled([
-          api.recentHands(50, signal),
+          api.searchHands({
+            site: siteFilter || undefined,
+            tag: tagFilter || undefined,
+            start_date: dates.start,
+            end_date: dates.end,
+            limit: 250,
+          }, signal),
           api.settings(signal),
           api.watchFolders(signal),
           api.importStatus(signal),
+          api.allTags(),
         ]);
       if (signal.aborted) return;
-      if (recentResult.status === "rejected") {
-        throw recentResult.reason;
+      if (searchResult.status === "rejected") {
+        throw searchResult.reason;
       }
-      const recent = recentResult.value;
+      const search = searchResult.value;
       setSidecarOnline(true);
-      setHands(recent.hands ?? []);
-      handsCountRef.current = recent.total ?? recent.hands?.length ?? 0;
-      setTotalHands(recent.total ?? recent.hands?.length ?? 0);
-      if (recent.db_path) setDbPath(recent.db_path);
+      setHands(search.hands ?? []);
+      setTotals(search.totals);
+      handsCountRef.current = search.total ?? search.hands?.length ?? 0;
+      setTotalHands(search.total ?? search.hands?.length ?? 0);
+
+      if (tagsResult.status === "fulfilled" && tagsResult.value.ok) {
+        setAllTags(tagsResult.value.tags);
+      }
       if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
       if (foldersResult.status === "fulfilled") setFolders(foldersResult.value);
       const status =
@@ -130,8 +191,6 @@ function App() {
       if (status) {
         setImportStatus(status);
         if (status.total_hands) setTotalHands(status.total_hands);
-      } else if (recent.import_status) {
-        setImportStatus(recent.import_status);
       }
       if (silent && tableScrollRef.current) {
         requestAnimationFrame(() => {
@@ -153,7 +212,7 @@ function App() {
         handsAbortRef.current = null;
       }
     }
-  }, []);
+  }, [siteFilter, tagFilter, getFilterDates]);
 
   const refreshDashboard = useCallback(async (silent = false, wait = false) => {
     if (!silent) {
@@ -451,6 +510,95 @@ function App() {
           <h1 className="panel-title">{active.label}</h1>
           <p className="panel-subtitle">{active.hint}</p>
 
+          {(activeTab === "hands" || activeTab === "organize") && (
+            <div className="card" style={{ padding: "1rem", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-end" }}>
+                {/* Site Selection */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>SITE</label>
+                  <select
+                    value={siteFilter}
+                    onChange={e => setSiteFilter(e.target.value)}
+                    style={{ padding: "0.4rem 0.6rem", borderRadius: "6px", background: "#1f2937", color: "#e5e7eb", border: "1px solid #374151", fontSize: "0.85rem" }}
+                  >
+                    <option value="">All Sites</option>
+                    <option value="BetACR">Americas Cardroom (ACR)</option>
+                    <option value="CoinPoker">CoinPoker</option>
+                  </select>
+                </div>
+
+                {/* Tag Selection */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>TAG</label>
+                  <select
+                    value={tagFilter}
+                    onChange={e => setTagFilter(e.target.value)}
+                    style={{ padding: "0.4rem 0.6rem", borderRadius: "6px", background: "#1f2937", color: "#e5e7eb", border: "1px solid #374151", fontSize: "0.85rem" }}
+                  >
+                    <option value="">All Tags</option>
+                    {allTags.map(t => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Date presets */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>DATE RANGE</label>
+                  <select
+                    value={datePreset}
+                    onChange={e => setDatePreset(e.target.value)}
+                    style={{ padding: "0.4rem 0.6rem", borderRadius: "6px", background: "#1f2937", color: "#e5e7eb", border: "1px solid #374151", fontSize: "0.85rem" }}
+                  >
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="yesterday">Yesterday</option>
+                    <option value="7days">Last 7 Days</option>
+                    <option value="30days">Last 30 Days</option>
+                    <option value="custom">Custom Date</option>
+                  </select>
+                </div>
+
+                {/* Custom Date Pickers */}
+                {datePreset === "custom" && (
+                  <>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                      <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>START</label>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={e => setStartDate(e.target.value)}
+                        style={{ padding: "0.35rem 0.5rem", borderRadius: "6px", background: "#1f2937", color: "#e5e7eb", border: "1px solid #374151", fontSize: "0.85rem" }}
+                      />
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                      <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>END</label>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={e => setEndDate(e.target.value)}
+                        style={{ padding: "0.35rem 0.5rem", borderRadius: "6px", background: "#1f2937", color: "#e5e7eb", border: "1px solid #374151", fontSize: "0.85rem" }}
+                      />
+                    </div>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => void refreshHands()}
+                  className="ghost-btn small"
+                  style={{ height: "34px", padding: "0 0.75rem", borderRadius: "6px" }}
+                >
+                  🔄 Reset/Refresh
+                </button>
+
+                <div style={{ marginLeft: "auto", fontSize: "0.8rem", color: "#9ca3af", alignSelf: "center" }}>
+                  📁 {dashboard?.db_path?.split(/[/\\]/).pop() ?? "—"}
+                </div>
+              </div>
+            </div>
+          )}
+
           {sidecarOnline === false ? (
             <div className="sidecar-offline-banner" role="alert">
               <div>
@@ -504,20 +652,28 @@ function App() {
           {activeTab === "hands" ? (
             <div className={`hands-layout ${selectedHandId ? "with-drawer" : ""}`}>
               <div className="hands-main">
-                <div className="card-grid">
+                <div className="card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "1rem" }}>
                   <div className="stat-card">
-                    <div className="stat-label">Database</div>
-                    <div className="stat-value mono small">
-                      {(dbPath ?? dashboard?.db_path)?.split(/[/\\]/).pop() ?? "—"}
+                    <div className="stat-label">Total Hands</div>
+                    <div className="stat-value">{totals.total_hands.toLocaleString()}</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-label" style={{ color: "#10b981" }}>Collected (Won)</div>
+                    <div className="stat-value" style={{ color: "#10b981" }}>
+                      {formatCurrency(totals.total_collected)}
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">In database</div>
-                    <div className="stat-value">{totalHands.toLocaleString()}</div>
+                    <div className="stat-label" style={{ color: "#ef4444" }}>Lost (Given/Taken)</div>
+                    <div className="stat-value" style={{ color: "#ef4444" }}>
+                      {formatCurrency(totals.total_lost)}
+                    </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">Showing</div>
-                    <div className="stat-value">{hands.length}</div>
+                    <div className="stat-label">Net Profit/Loss</div>
+                    <div className="stat-value" style={{ color: totals.net_profit_loss >= 0 ? "#10b981" : "#ef4444" }}>
+                      {formatCurrency(totals.net_profit_loss)}
+                    </div>
                   </div>
                 </div>
                 <div className="table-wrap table-scroll" ref={tableScrollRef}>
@@ -645,6 +801,7 @@ function App() {
             <div className={`hands-layout ${selectedHandId ? "with-drawer" : ""}`}>
               <div className="hands-main" style={{ flex: 1, overflowY: "auto" }}>
                 <OrganizePanel
+                  hands={hands}
                   onSelectHandId={openHand}
                   selectedHandId={selectedHandId}
                 />

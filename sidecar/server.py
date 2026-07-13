@@ -642,6 +642,33 @@ def live_current_hand(
     }
 
 
+@app.get("/api/hands/search")
+def search_hands(
+    site: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Dict[str, Any]:
+    db = _get_db()
+    settings = load_settings()
+    result = db.search_hands(
+        site=site,
+        tag=tag,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "ok": True,
+        "total": result["total"],
+        "totals": result["totals"],
+        "hands": hands_to_summaries(result["hands"], settings),
+    }
+
+
 @app.get("/api/hands/{hand_id}")
 def get_hand(hand_id: str) -> Dict[str, Any]:
     settings = load_settings()
@@ -1514,31 +1541,6 @@ class TagRequest(BaseModel):
     tag: str
 
 
-@app.get("/api/hands/search")
-def search_hands(
-    site: Optional[str] = Query(None),
-    tag: Optional[str] = Query(None),
-    start_date: Optional[str] = Query(None),
-    end_date: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
-) -> Dict[str, Any]:
-    db = _get_db()
-    settings = load_settings()
-    result = db.search_hands(
-        site=site,
-        tag=tag,
-        start_date=start_date,
-        end_date=end_date,
-        limit=limit,
-        offset=offset,
-    )
-    return {
-        "ok": True,
-        "total": result["total"],
-        "totals": result["totals"],
-        "hands": hands_to_summaries(result["hands"], settings),
-    }
 
 
 @app.post("/api/hands/{hand_id}/tags")
