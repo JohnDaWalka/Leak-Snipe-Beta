@@ -1,7 +1,7 @@
 {
   "hero_names": {
     "ACR": "",
-    "CoinPoker": "jdwalka",
+    "CoinPoker": "jdwalka,GBOSS101",
     "BetACR": "GBOSS101,JohnDaWalka",
     "GGPoker": "JohnDaWalka",
     "ReplayPoker": ""
@@ -38,10 +38,10 @@
   "theme": "Slate Blue",
   "advanced_mode": false,
   "live_hud_enabled": true,
-  "live_hud_backend": "python",
   "hud_opacity": 0.6,
   "hud_seat_layout": "auto",
   "hud_density": "compact",
+  "hud_site_preset": "auto",
   "hud_anchor": "top-left",
   "hud_offset_x": 0,
   "hud_offset_y": 0,
@@ -88,6 +88,7 @@
       }
     }
   },
+  "live_hud_backend": "python",
   "ai_provider": "asi1",
   "ollama_model": "qwen2.5:7b",
   "ai_include_dataset_context": true,
@@ -97,7 +98,6 @@
   "ai_agentic_tools": true,
   "asi1_model": "asi1",
   "coach_memory_hero": "JohnDaWalka",
-  "hud_site_preset": "auto",
   "db_path": "poker_hands.db",
   "dh2_auto_sync": false,
   "dh2_sync_interval": 5

@@ -320,9 +320,7 @@ class HandParser:
         if not events:
             return []
 
-        hero = self._resolve_hero("", "CoinPoker")
-        if not hero:
-            hero = self.settings.get("hero_names", {}).get("CoinPoker", "")
+        candidates = self._hero_candidates("CoinPoker")
 
         by_hand: Dict[str, List[Dict[str, Any]]] = {}
         last_key = ""
@@ -342,6 +340,34 @@ class HandParser:
         results: List[Hand] = []
         for hand_key in sorted(by_hand.keys()):
             hand_events = by_hand[hand_key]
+            
+            # Resolve actual hero for this specific hand based on players sitting at the table
+            hand_players = set()
+            for ev in hand_events:
+                bean = ev.get("bean") or {}
+                # check game.seat
+                u = bean.get("userName")
+                if u:
+                    hand_players.add(str(u).strip())
+                # check seatResponseDataList
+                for seat in (bean.get("seatResponseDataList") or []):
+                    if isinstance(seat, dict) and seat.get("userName"):
+                        hand_players.add(str(seat["userName"]).strip())
+                # check nested seatInfoResponseData
+                seat_block = bean.get("seatInfoRsponseData") or bean.get("seatInfoResponseData") or {}
+                for seat in (seat_block.get("seatResponseDataList") or []):
+                    if isinstance(seat, dict) and seat.get("userName"):
+                        hand_players.add(str(seat["userName"]).strip())
+
+            # Find matching hero candidate
+            matched_hero = None
+            for c in candidates:
+                if c in hand_players:
+                    matched_hero = c
+                    break
+            
+            hero = matched_hero if matched_hero else (candidates[0] if candidates else "")
+
             cmds = {ev["cmd"] for ev in hand_events}
             complete = "game.winnerInfo" in cmds or "game.reset_data" in cmds
             has_structure = (
@@ -543,9 +569,11 @@ class HandParser:
                     seat_to_name[seat_id] = player
                     stack = float(bean.get("userChips") or 0.0)
                     prev = h.players.get(seat_id) or {}
+                    prev_stack = float(prev.get("stack") or 0.0)
+                    starting_stack = prev_stack if prev_stack > 0.0 else (stack + amount)
                     h.players[seat_id] = {
                         "name": player,
-                        "stack": stack or float(prev.get("stack") or 0.0),
+                        "stack": starting_stack,
                         "is_hero": player == hero,
                     }
                 streets_map[street_name]["actions"].append({
@@ -672,7 +700,7 @@ class HandParser:
         h = Hand()
         h.site = "CoinPoker"
         lines = text.split("\n")
-        hero = self.settings.get("hero_names", {}).get("CoinPoker", "jdwalka")
+        hero = self._resolve_hero(text, "CoinPoker")
 
         header = lines[0] if lines else ""
         m = re.search(r"CoinPoker Hand #(\d+)", header)
