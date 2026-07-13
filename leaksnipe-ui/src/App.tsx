@@ -99,6 +99,8 @@ function App() {
     total_rake: 0,
   });
   const [allTags, setAllTags] = useState<string[]>([]);
+  const [userFilter, setUserFilter] = useState<string>("");
+  const [allHeroes, setAllHeroes] = useState<string[]>([]);
 
   const tableScrollRef = useRef<HTMLDivElement>(null);
   const handsCountRef = useRef(0);
@@ -156,19 +158,21 @@ function App() {
     try {
       const signal = controller.signal;
       const dates = getFilterDates();
-      const [searchResult, settingsResult, foldersResult, statusResult, tagsResult] =
+      const [searchResult, settingsResult, foldersResult, statusResult, tagsResult, heroesResult] =
         await Promise.allSettled([
           api.searchHands({
             site: siteFilter || undefined,
             tag: tagFilter || undefined,
             start_date: dates.start,
             end_date: dates.end,
+            user: userFilter || undefined,
             limit: 250,
           }, signal),
           api.settings(signal),
           api.watchFolders(signal),
           api.importStatus(signal),
           api.allTags(),
+          api.allHeroes(),
         ]);
       if (signal.aborted) return;
       if (searchResult.status === "rejected") {
@@ -183,6 +187,9 @@ function App() {
 
       if (tagsResult.status === "fulfilled" && tagsResult.value.ok) {
         setAllTags(tagsResult.value.tags);
+      }
+      if (heroesResult.status === "fulfilled" && heroesResult.value.ok) {
+        setAllHeroes(heroesResult.value.heroes);
       }
       if (settingsResult.status === "fulfilled") setSettings(settingsResult.value);
       if (foldersResult.status === "fulfilled") setFolders(foldersResult.value);
@@ -212,7 +219,7 @@ function App() {
         handsAbortRef.current = null;
       }
     }
-  }, [siteFilter, tagFilter, getFilterDates]);
+  }, [siteFilter, tagFilter, userFilter, getFilterDates]);
 
   const refreshDashboard = useCallback(async (silent = false, wait = false) => {
     if (!silent) {
@@ -513,6 +520,51 @@ function App() {
           {(activeTab === "hands" || activeTab === "organize") && (
             <div className="card" style={{ padding: "1rem", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.08)", marginBottom: "1rem" }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "1rem", alignItems: "flex-end" }}>
+                {/* User Tab Selector */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>HERO / USER</label>
+                  <div style={{ display: "flex", background: "#111827", padding: "2px", borderRadius: "8px", border: "1px solid #374151" }}>
+                    <button
+                      type="button"
+                      onClick={() => setUserFilter("")}
+                      style={{
+                        padding: "0.35rem 0.75rem",
+                        borderRadius: "6px",
+                        border: "none",
+                        fontSize: "0.8rem",
+                        fontWeight: "600",
+                        cursor: "pointer",
+                        background: userFilter === "" ? "#3b82f6" : "transparent",
+                        color: userFilter === "" ? "#ffffff" : "#9ca3af",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      All Users
+                    </button>
+                    {allHeroes.map(h => (
+                      <button
+                        key={h}
+                        type="button"
+                        onClick={() => setUserFilter(h)}
+                        style={{
+                          padding: "0.35rem 0.75rem",
+                          borderRadius: "6px",
+                          border: "none",
+                          fontSize: "0.8rem",
+                          fontWeight: "600",
+                          cursor: "pointer",
+                          background: userFilter === h ? "#3b82f6" : "transparent",
+                          color: userFilter === h ? "#ffffff" : "#9ca3af",
+                          transition: "all 0.15s ease",
+                          textTransform: "capitalize"
+                        }}
+                      >
+                        {h}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Site Selection */}
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                   <label style={{ fontSize: "0.75rem", color: "#9ca3af", fontWeight: "600" }}>SITE</label>

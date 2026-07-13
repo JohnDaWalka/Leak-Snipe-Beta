@@ -20,6 +20,10 @@ class TaggingAndSearchTests(unittest.TestCase):
         self.hand1.hero_won = 150.0
         self.hand1.rake = 5.0
         self.hand1.is_tournament = False
+        self.hand1.players = {
+            1: {"name": "jdwalka", "stack": 100.0, "is_hero": True},
+            2: {"name": "other1", "stack": 80.0, "is_hero": False}
+        }
         self.db.save_hand(self.hand1, "test_file_1.log")
 
         self.hand2 = Hand()
@@ -30,6 +34,10 @@ class TaggingAndSearchTests(unittest.TestCase):
         self.hand2.hero_won = -50.0
         self.hand2.rake = 2.0
         self.hand2.is_tournament = False
+        self.hand2.players = {
+            1: {"name": "GBOSS101", "stack": 150.0, "is_hero": True},
+            2: {"name": "other2", "stack": 120.0, "is_hero": False}
+        }
         self.db.save_hand(self.hand2, "test_file_2.log")
 
         self.hand3 = Hand()
@@ -40,6 +48,10 @@ class TaggingAndSearchTests(unittest.TestCase):
         self.hand3.hero_won = -200.0
         self.hand3.rake = 10.0
         self.hand3.is_tournament = True
+        self.hand3.players = {
+            1: {"name": "jdwalka", "stack": 200.0, "is_hero": True},
+            2: {"name": "other3", "stack": 150.0, "is_hero": False}
+        }
         self.db.save_hand(self.hand3, "test_file_3.log")
 
     def tearDown(self):
@@ -103,6 +115,25 @@ class TaggingAndSearchTests(unittest.TestCase):
         self.assertEqual(res["totals"]["total_hands"], 2)
         # Should include hand2 and hand3 (-50 + -200 = -250)
         self.assertEqual(res["totals"]["net_profit_loss"], -250.0)
+
+    def test_get_all_heroes(self):
+        heroes = self.db.get_all_heroes()
+        # Should be alphabetical
+        self.assertEqual(heroes, ["GBOSS101", "jdwalka"])
+
+    def test_search_hands_filtered_by_hero(self):
+        # Filter by jdwalka
+        res_jd = self.db.search_hands(hero_name="jdwalka")
+        self.assertEqual(res_jd["total"], 2)
+        self.assertEqual(res_jd["totals"]["total_hands"], 2)
+        # hand1 (+150) + hand3 (-200) = -50
+        self.assertEqual(res_jd["totals"]["net_profit_loss"], -50.0)
+
+        # Filter by GBOSS101 (case-insensitive check)
+        res_gb = self.db.search_hands(hero_name="gboss101")
+        self.assertEqual(res_gb["total"], 1)
+        self.assertEqual(res_gb["totals"]["total_hands"], 1)
+        self.assertEqual(res_gb["totals"]["net_profit_loss"], -50.0)
 
 if __name__ == "__main__":
     unittest.main()

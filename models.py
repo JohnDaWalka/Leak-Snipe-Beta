@@ -459,6 +459,7 @@ class HandDatabase:
         tag: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        hero_name: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
     ) -> Dict[str, Any]:
@@ -484,6 +485,9 @@ class HandDatabase:
                 if tag:
                     where_clauses.append("hand_id IN (SELECT hand_id FROM hand_tags WHERE tag = ?)")
                     params.append(tag)
+                if hero_name:
+                    where_clauses.append("hand_id IN (SELECT hand_id FROM players WHERE is_hero = 1 AND LOWER(name) = ?)")
+                    params.append(hero_name.lower())
 
                 where_str = ""
                 if where_clauses:
@@ -707,6 +711,18 @@ class HandDatabase:
             conn = self._connect()
             try:
                 rows = conn.execute("SELECT DISTINCT tag FROM hand_tags ORDER BY tag").fetchall()
+                return [r[0] for r in rows]
+            finally:
+                conn.close()
+
+    def get_all_heroes(self) -> List[str]:
+        """Get all unique hero names in database."""
+        with self.lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT DISTINCT name FROM players WHERE is_hero = 1 AND name IS NOT NULL AND name != '' ORDER BY name"
+                ).fetchall()
                 return [r[0] for r in rows]
             finally:
                 conn.close()

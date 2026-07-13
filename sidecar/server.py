@@ -648,6 +648,7 @@ def search_hands(
     tag: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
+    user: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> Dict[str, Any]:
@@ -658,6 +659,7 @@ def search_hands(
         tag=tag,
         start_date=start_date,
         end_date=end_date,
+        hero_name=user,
         limit=limit,
         offset=offset,
     )
@@ -1561,6 +1563,12 @@ def remove_hand_tag(hand_id: str, tag: str) -> Dict[str, Any]:
 def list_all_tags() -> Dict[str, Any]:
     db = _get_db()
     return {"ok": True, "tags": db.get_all_tags()}
+
+
+@app.get("/api/heroes")
+def list_all_heroes() -> Dict[str, Any]:
+    db = _get_db()
+    return {"ok": True, "heroes": db.get_all_heroes()}
 
 
 @app.get("/api/events")

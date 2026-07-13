@@ -1049,6 +1049,7 @@ export const api = {
       tag?: string;
       start_date?: string;
       end_date?: string;
+      user?: string;
       limit?: number;
       offset?: number;
     },
@@ -1059,6 +1060,7 @@ export const api = {
     if (params.tag) q.set("tag", params.tag);
     if (params.start_date) q.set("start_date", params.start_date);
     if (params.end_date) q.set("end_date", params.end_date);
+    if (params.user) q.set("user", params.user);
     if (params.limit !== undefined) q.set("limit", String(params.limit));
     if (params.offset !== undefined) q.set("offset", String(params.offset));
     return apiFetch<SearchHandsResponse>(`/api/hands/search?${q.toString()}`, {
@@ -1078,6 +1080,8 @@ export const api = {
     ),
   allTags: () =>
     apiFetch<{ ok: boolean; tags: string[] }>("/api/tags"),
+  allHeroes: () =>
+    apiFetch<{ ok: boolean; heroes: string[] }>("/api/heroes"),
   hand: async (id: string, signal?: AbortSignal) => {
     const res = await apiFetch<{ ok?: boolean; hand?: HandDetail } & Partial<HandDetail>>(
       `/api/hands/${encodeURIComponent(id)}`,
