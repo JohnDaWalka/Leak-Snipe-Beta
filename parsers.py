@@ -445,6 +445,8 @@ class HandParser:
                 continue
             stack = float(seat.get("userChips") or 0.0)
             seat_to_name[seat_id] = name
+            if seat_id in h.players and h.players[seat_id].get("stack", 0.0) > 0.0:
+                continue
             h.players[seat_id] = {
                 "name": name,
                 "stack": stack,
@@ -484,6 +486,8 @@ class HandParser:
         seat_to_name: Dict[int, str] = {}
         board_cards: List[str] = []
         raw_lines: List[str] = []
+        starting_stacks: Dict[str, float] = {}
+        ending_stacks: Dict[str, float] = {}
 
         for event in events:
             cmd = event["cmd"]
@@ -491,6 +495,34 @@ class HandParser:
             room = event.get("room") or ""
             ts = event.get("timestamp") or ""
             raw_lines.append(event.get("line") or "")
+
+            # Track starting and ending stacks chronologically
+            if cmd in ("game.game_alldata", "game.seatInfo"):
+                seat_list = []
+                if cmd == "game.game_alldata":
+                    seat_block = (
+                        bean.get("seatInfoRsponseData")
+                        or bean.get("seatInfoResponseData")
+                        or {}
+                    )
+                    seat_list = seat_block.get("seatResponseDataList") or []
+                else:
+                    seat_list = bean.get("seatResponseDataList") or []
+                for s in seat_list:
+                    if isinstance(s, dict):
+                        name = str(s.get("userName") or "").strip()
+                        stack = float(s.get("userChips") or 0.0)
+                        if name:
+                            if name not in starting_stacks:
+                                starting_stacks[name] = stack
+                            ending_stacks[name] = stack
+            elif cmd == "game.seat":
+                player = str(bean.get("userName") or "").strip()
+                stack = float(bean.get("userChips") or 0.0)
+                amount = float(bean.get("betAmout") or bean.get("betAmount") or 0.0)
+                if player:
+                    if player not in starting_stacks:
+                        starting_stacks[player] = stack + amount
 
             if room and not h.table_name:
                 table_id, buy_in, table_name = self._coinpoker_parse_room(room)
@@ -678,19 +710,29 @@ class HandParser:
         h.hero_player = hero
         h.raw_text = "\n".join(raw_lines)
 
-        if h.hero_won == 0.0 and hero:
-            hero_profit = None
-            for event in events:
-                if event["cmd"] != "game.cumulativeWinnerInfo":
-                    continue
-                for winner in (event.get("bean") or {}).get("winnersData") or []:
-                    if str(winner.get("userName") or "").strip() == hero:
-                        hero_profit = float(winner.get("cumulativeProfitLoss") or 0.0)
-                        break
-            if hero_profit is not None:
-                h.hero_won = hero_profit
-            else:
-                h.hero_won = self._calc_hero_result(h, hero)
+        # Override the stack sizes of all players to be their starting stacks
+        for seat_id, p_info in h.players.items():
+            name = p_info["name"]
+            if name in starting_stacks:
+                h.players[seat_id]["stack"] = starting_stacks[name]
+
+        # Calculate hero's net profit/loss using starting and ending stacks
+        if hero and hero in starting_stacks and hero in ending_stacks:
+            h.hero_won = ending_stacks[hero] - starting_stacks[hero]
+        else:
+            if h.hero_won == 0.0 and hero:
+                hero_profit = None
+                for event in events:
+                    if event["cmd"] != "game.cumulativeWinnerInfo":
+                        continue
+                    for winner in (event.get("bean") or {}).get("winnersData") or []:
+                        if str(winner.get("userName") or "").strip() == hero:
+                            hero_profit = float(winner.get("cumulativeProfitLoss") or 0.0)
+                            break
+                if hero_profit is not None:
+                    h.hero_won = hero_profit
+                else:
+                    h.hero_won = self._calc_hero_result(h, hero)
 
         h.hero_position = self._calc_position(h, hero)
         return h if h.hand_id else None
