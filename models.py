@@ -453,6 +453,94 @@ class HandDatabase:
             finally:
                 conn.close()
 
+    def search_hands(
+        self,
+        site: Optional[str] = None,
+        tag: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Search and filter hands with aggregate totals."""
+        with self.lock:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                c = conn.cursor()
+
+                where_clauses = []
+                params = []
+
+                if site:
+                    where_clauses.append("site = ?")
+                    params.append(site)
+                if start_date:
+                    where_clauses.append("date >= ?")
+                    params.append(start_date)
+                if end_date:
+                    where_clauses.append("date <= ?")
+                    params.append(end_date)
+                if tag:
+                    where_clauses.append("hand_id IN (SELECT hand_id FROM hand_tags WHERE tag = ?)")
+                    params.append(tag)
+
+                where_str = ""
+                if where_clauses:
+                    where_str = " AND " + " AND ".join(where_clauses)
+
+                # 1. Compute totals
+                totals_sql = f"""
+                    SELECT 
+                        COUNT(*) as total_hands,
+                        SUM(CASE WHEN hero_won > 0 THEN hero_won ELSE 0 END) as total_collected,
+                        SUM(CASE WHEN hero_won < 0 THEN hero_won ELSE 0 END) as total_lost,
+                        SUM(hero_won) as net_profit_loss,
+                        SUM(rake) as total_rake
+                    FROM hands
+                    WHERE 1=1 {where_str}
+                """
+                totals_row = c.execute(totals_sql, params).fetchone()
+                totals = {
+                    "total_hands": totals_row["total_hands"] or 0,
+                    "total_collected": totals_row["total_collected"] or 0.0,
+                    "total_lost": totals_row["total_lost"] or 0.0,
+                    "net_profit_loss": totals_row["net_profit_loss"] or 0.0,
+                    "total_rake": totals_row["total_rake"] or 0.0,
+                }
+
+                # 2. Get paginated rows
+                hands_sql = f"""
+                    SELECT * FROM hands
+                    WHERE 1=1 {where_str}
+                    ORDER BY date DESC
+                    LIMIT ? OFFSET ?
+                """
+                rows = c.execute(hands_sql, params + [limit, offset]).fetchall()
+
+                if not rows:
+                    return {"total": totals["total_hands"], "totals": totals, "hands": []}
+
+                hand_ids = [row["hand_id"] for row in rows]
+                players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand = (
+                    self._load_related_for_ids(c, hand_ids)
+                )
+
+                hands = [
+                    self._hydrate_hand(
+                        row, players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand
+                    )
+                    for row in rows
+                ]
+
+                return {
+                    "total": totals["total_hands"],
+                    "totals": totals,
+                    "hands": hands,
+                }
+            finally:
+                conn.close()
+
     def get_hands_page(self, limit: int, offset: int = 0) -> List[Hand]:
         """Load a page of hands ordered by date (does not load entire DB)."""
         # Read path: skip process-wide lock so stats get_all_hands cannot stall the UI.

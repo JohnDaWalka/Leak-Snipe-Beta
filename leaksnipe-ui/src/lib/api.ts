@@ -1007,6 +1007,21 @@ export function handSummaryToDetailPreview(summary: HandSummary): HandDetail {
   };
 }
 
+export type TotalsStats = {
+  total_hands: number;
+  total_collected: number;
+  total_lost: number;
+  net_profit_loss: number;
+  total_rake: number;
+};
+
+export type SearchHandsResponse = {
+  ok: boolean;
+  total: number;
+  totals: TotalsStats;
+  hands: HandSummary[];
+};
+
 export const api = {
   diagnostics: () => apiFetch<RuntimeDiagnostics>("/api/diagnostics"),
   dashboard: (wait = false, signal?: AbortSignal) =>
@@ -1028,6 +1043,41 @@ export const api = {
       timeoutMs: STARTUP_FETCH_TIMEOUT_MS,
       signal,
     }),
+  searchHands: (
+    params: {
+      site?: string;
+      tag?: string;
+      start_date?: string;
+      end_date?: string;
+      limit?: number;
+      offset?: number;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    if (params.site) q.set("site", params.site);
+    if (params.tag) q.set("tag", params.tag);
+    if (params.start_date) q.set("start_date", params.start_date);
+    if (params.end_date) q.set("end_date", params.end_date);
+    if (params.limit !== undefined) q.set("limit", String(params.limit));
+    if (params.offset !== undefined) q.set("offset", String(params.offset));
+    return apiFetch<SearchHandsResponse>(`/api/hands/search?${q.toString()}`, {
+      timeoutMs: STARTUP_FETCH_TIMEOUT_MS,
+      signal,
+    });
+  },
+  addTag: (handId: string, tag: string) =>
+    apiFetch<{ ok: boolean; tags: string[] }>(`/api/hands/${encodeURIComponent(handId)}/tags`, {
+      method: "POST",
+      body: JSON.stringify({ tag }),
+    }),
+  removeTag: (handId: string, tag: string) =>
+    apiFetch<{ ok: boolean; tags: string[] }>(
+      `/api/hands/${encodeURIComponent(handId)}/tags/${encodeURIComponent(tag)}`,
+      { method: "DELETE" },
+    ),
+  allTags: () =>
+    apiFetch<{ ok: boolean; tags: string[] }>("/api/tags"),
   hand: async (id: string, signal?: AbortSignal) => {
     const res = await apiFetch<{ ok?: boolean; hand?: HandDetail } & Partial<HandDetail>>(
       `/api/hands/${encodeURIComponent(id)}`,

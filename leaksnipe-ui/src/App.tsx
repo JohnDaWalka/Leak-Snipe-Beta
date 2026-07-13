@@ -25,11 +25,13 @@ import { TheoryPanel } from "./components/TheoryPanel";
 import { HandDetailPanel, HandReplayerModal } from "./components/HandDetail";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatsPanel } from "./components/StatsPanel";
+import { OrganizePanel } from "./components/OrganizePanel";
 import { resolveHudBackend, syncLiveHud } from "./lib/hudManager";
 import "./App.css";
 
 const TABS: { id: TabId; label: string; hint: string }[] = [
   { id: "hands", label: "Hands", hint: "Click a hand for stats · Replay button opens the table replayer" },
+  { id: "organize", label: "Organize", hint: "Group hands by date/tag, add custom tags, and review pot totals" },
   { id: "stats", label: "Stats", hint: "VPIP, PFR, position breakdown, leak alerts" },
   { id: "coach", label: "AI Coach", hint: "Session analysis & chat (OpenAI / Gemini free tier)" },
   { id: "equity", label: "Equity", hint: "Monte Carlo equity — NLHE, Omaha Hi/Lo, 7-Card Stud & Stud Hi/Lo" },
@@ -610,6 +612,43 @@ function App() {
                 </div>
               </div>
 
+              <aside
+                className={`detail-drawer ${selectedHandId ? "open" : ""}`}
+                aria-hidden={!selectedHandId}
+              >
+                {selectedHandId ? (
+                  <HandDetailPanel
+                    hand={selectedHand}
+                    loading={detailLoading}
+                    error={detailError}
+                    onRetry={
+                      selectedHandId
+                        ? () => {
+                            if (selectedHandId) void openHand(selectedHandId);
+                          }
+                        : undefined
+                    }
+                    onClose={closeDetail}
+                    onOpenReplayer={() => {
+                      if (selectedHand) setReplayerHand(selectedHand);
+                    }}
+                    positionStats={positionStats}
+                    sessionVpip={dashboard?.vpip}
+                    sessionPfr={dashboard?.pfr}
+                  />
+                ) : null}
+              </aside>
+            </div>
+          ) : null}
+
+          {activeTab === "organize" ? (
+            <div className={`hands-layout ${selectedHandId ? "with-drawer" : ""}`}>
+              <div className="hands-main" style={{ flex: 1, overflowY: "auto" }}>
+                <OrganizePanel
+                  onSelectHandId={openHand}
+                  selectedHandId={selectedHandId}
+                />
+              </div>
               <aside
                 className={`detail-drawer ${selectedHandId ? "open" : ""}`}
                 aria-hidden={!selectedHandId}

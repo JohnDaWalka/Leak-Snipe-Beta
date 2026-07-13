@@ -1510,6 +1510,57 @@ def theory_value_train(body: ValueNetTrainRequest) -> Dict[str, Any]:
     return {"ok": True, **meta}
 
 
+class TagRequest(BaseModel):
+    tag: str
+
+
+@app.get("/api/hands/search")
+def search_hands(
+    site: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+) -> Dict[str, Any]:
+    db = _get_db()
+    settings = load_settings()
+    result = db.search_hands(
+        site=site,
+        tag=tag,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "ok": True,
+        "total": result["total"],
+        "totals": result["totals"],
+        "hands": hands_to_summaries(result["hands"], settings),
+    }
+
+
+@app.post("/api/hands/{hand_id}/tags")
+def add_hand_tag(hand_id: str, body: TagRequest) -> Dict[str, Any]:
+    db = _get_db()
+    db.add_tag(hand_id, body.tag)
+    return {"ok": True, "tags": db.get_tags(hand_id)}
+
+
+@app.delete("/api/hands/{hand_id}/tags/{tag}")
+def remove_hand_tag(hand_id: str, tag: str) -> Dict[str, Any]:
+    db = _get_db()
+    db.remove_tag(hand_id, tag)
+    return {"ok": True, "tags": db.get_tags(hand_id)}
+
+
+@app.get("/api/tags")
+def list_all_tags() -> Dict[str, Any]:
+    db = _get_db()
+    return {"ok": True, "tags": db.get_all_tags()}
+
+
 @app.get("/api/events")
 async def sse_events():
     """Server-sent events for new hand imports."""
