@@ -27,6 +27,19 @@ from models import Hand, HandDatabase
 from parsers import HandParser
 
 
+class DriveHUD2Sync:
+    """Compatibility shim for the historical DriveHUD2Sync export.
+
+    The app and tests import this symbol from the package root while the
+    current codebase no longer needs a separate implementation for it. This
+    placeholder keeps the import surface stable without affecting hand parsing.
+    """
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+
 def _canonical_path(path: str) -> str:
     """Convert path to canonical form for comparison."""
     if not path:
@@ -893,11 +906,8 @@ def get_builtin_scan_dirs() -> List[Dict[str, str]]:
     return builtins
 
 
-def get_default_hh_paths() -> dict:
-    """
-    Return default hand history folder paths for each supported poker site.
-    Checks common install locations and returns existing paths only.
-    """
+def get_all_default_hh_paths() -> dict:
+    """Return all existing hand history folder paths for each supported poker site."""
     appdata = os.environ.get("APPDATA", "")
     localappdata = os.environ.get("LOCALAPPDATA", "")
     userprofile = os.environ.get("USERPROFILE", "")
@@ -908,6 +918,10 @@ def get_default_hh_paths() -> dict:
             os.path.join(appdata, "CoinPoker", "logs"),
             os.path.join(appdata, "CoinPoker", "HandHistory"),
             os.path.join(localappdata, "CoinPoker", "HandHistory"),
+            os.path.join(localappdata, "Temp", "updapp-play", "handhistory"),
+            os.path.join(userprofile, "OneDrive", "PokerHandHistories"),
+            r"C:\Program Files (x86)\Ace Poker Solutions\Asian Hand Converter\HM3HandHistories",
+            r"C:\KingsHands\AdvancedCoinPokerConverter\HandHistory",
         ],
         "BetACR": [
             os.path.join(r"C:\ACR Poker\handHistory"),
@@ -949,11 +963,22 @@ def get_default_hh_paths() -> dict:
 
     result = {}
     for site, paths in candidates.items():
+        existing = []
         for path in paths:
             if path and os.path.isdir(path):
-                result[site] = path
-                break
+                existing.append(path)
+        if existing:
+            result[site] = existing
     return result
+
+
+def get_default_hh_paths() -> dict:
+    """
+    Return default hand history folder paths for each supported poker site.
+    Checks common install locations and returns existing paths only.
+    """
+    all_paths = get_all_default_hh_paths()
+    return {site: paths[0] for site, paths in all_paths.items() if paths}
 
 
 def discover_scan_dirs(settings: Optional[Dict[str, Any]] = None) -> List[Dict[str, str]]:
@@ -976,8 +1001,9 @@ def discover_scan_dirs(settings: Optional[Dict[str, Any]] = None) -> List[Dict[s
             if os.path.isdir(subdir):
                 candidates.append((subdir, "BetACR"))
 
-    for site, path in get_default_hh_paths().items():
-        candidates.append((path, site))
+    for site, paths in get_all_default_hh_paths().items():
+        for path in paths:
+            candidates.append((path, site))
 
     extra_betacr = [
         r"C:\HM3Archive\Winning Poker Network",

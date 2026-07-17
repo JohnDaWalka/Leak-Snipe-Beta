@@ -1,0 +1,21 @@
+name = "leaksnipe-proxy"
+account_id = "f226035af09775dbffd7e6350adc8a12"
+workers_dev = true
+compatibility_date = "2024-09-01"
+
+main = "src/index.js"
+# CLOUDFLARE_API_TOKEN and WORKER_DOMAIN are managed via secrets/environment variables; removed from top-level.
+
+[[kv_namespaces]]
+binding = "KV_BINDING"
+id = "c13121512b8e4519ae9b3a3a52daeed1"
+
+[[r2_buckets]]
+ binding = "LOGS_R2"
+ bucket_name = "leaksnipe-logs"
+ preview_bucket_name = "leaksnipe-logs"
+
+[[r2_buckets]]
+ binding = "POKER_R2"
+ bucket_name = "poker-hand-histories"
+ preview_bucket_name = "poker-hand-histories"

@@ -17,6 +17,7 @@ import {
   resolveHudBackend,
   stopPythonLiveHud,
   testLiveHud,
+  toggleHudLayoutMode,
   type HudDiagnostics,
 } from "../lib/hudManager";
 
@@ -59,6 +60,7 @@ export function SettingsPanel({ settings, folders, onSaved }: SettingsPanelProps
   const [hudTesting, setHudTesting] = useState(false);
   const [hudDiag, setHudDiag] = useState<HudDiagnostics | null>(null);
   const [hudDiagError, setHudDiagError] = useState<string | null>(null);
+  const [hudLayoutToggling, setHudLayoutToggling] = useState(false);
   const [sidecarOk, setSidecarOk] = useState<boolean | null>(null);
   const [sidecarStatus, setSidecarStatus] = useState<SidecarStatus | null>(null);
   const [runtimeDiag, setRuntimeDiag] = useState<RuntimeDiagnostics | null>(null);
@@ -133,6 +135,21 @@ export function SettingsPanel({ settings, folders, onSaved }: SettingsPanelProps
       }
     } finally {
       setHudTesting(false);
+    }
+  };
+
+  const runToggleHudLayoutMode = async () => {
+    setHudLayoutToggling(true);
+    setHudDiagError(null);
+    try {
+      await toggleHudLayoutMode();
+      setMessage("Toggled HUD layout mode (fallback for Ctrl+Shift+H).");
+      window.setTimeout(() => setMessage(null), 4000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setHudDiagError(`Could not toggle HUD layout mode: ${msg}`);
+    } finally {
+      setHudLayoutToggling(false);
     }
   };
 
@@ -571,6 +588,19 @@ export function SettingsPanel({ settings, folders, onSaved }: SettingsPanelProps
                 disabled={hudTesting}
               >
                 {hudTesting ? "Testing HUD…" : "Test Tauri overlay"}
+              </button>
+            ) : null}
+            {useTauriHud ? (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => void runToggleHudLayoutMode()}
+                disabled={hudLayoutToggling}
+                title="Fallback for the Ctrl+Shift+H hotkey — use this if the hotkey isn't toggling layout mode on the overlay"
+              >
+                {hudLayoutToggling
+                  ? "Toggling…"
+                  : "Toggle HUD Layout Mode (for dragging seat badges)"}
               </button>
             ) : null}
             {!useTauriHud ? (

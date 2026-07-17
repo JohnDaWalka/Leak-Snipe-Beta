@@ -6,6 +6,7 @@ Exposes all *.db files under the LeakSnipe project (poker_hands.db, coach_memory
 from __future__ import annotations
 
 import os
+import sys
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,18 @@ from fastmcp import FastMCP
 REPO_ROOT = Path(os.environ.get("LEAKSNIPE_ROOT", Path(__file__).resolve().parent)).expanduser().resolve()
 # Optional override for a single DB; otherwise all *.db under REPO_ROOT are available.
 DEFAULT_DB_ENV = os.environ.get("SQLITE_DB_PATH")
+
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+sys.path.append(str(REPO_ROOT / "sidecar"))
+
+try:
+    from models import HandDatabase, Hand
+    from config import load_settings
+    from utils import resolve_hand_hero_name
+except Exception as e:
+    sys.stderr.write(f"[LeakSnipe-Grok] Imports failed: {e}\n")
+    sys.stderr.flush()
 
 mcp = FastMCP(
     name="LeakSnipe",
@@ -79,6 +92,176 @@ class SQLiteConnection:
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         if self.conn:
             self.conn.close()
+
+
+def serialize_hand(hand: Hand, settings: dict) -> dict:
+    hero_name = resolve_hand_hero_name(
+        settings,
+        hand.site,
+        players=hand.players,
+        raw_text=hand.raw_text,
+        hero_player=getattr(hand, "hero_player", ""),
+    )
+    date_str = hand.date.isoformat() if hand.date else None
+    
+    return {
+        "hand_id": hand.hand_id,
+        "site": hand.site,
+        "date": date_str,
+        "game_type": hand.game_type,
+        "is_tournament": hand.is_tournament,
+        "table_name": hand.table_name,
+        "hero_cards": hand.hero_cards,
+        "board_cards": hand.board_cards,
+        "pot": hand.pot,
+        "rake": hand.rake,
+        "hero_won": hand.hero_won,
+        "hero_position": hand.hero_position,
+        "hero_name": hero_name,
+        "players": [
+            {
+                "seat": seat,
+                "name": p["name"],
+                "stack": p["stack"],
+                "is_hero": p.get("is_hero", False)
+            }
+            for seat, p in hand.players.items()
+        ],
+        "streets": [
+            {
+                "name": street.get("name", ""),
+                "cards": street.get("cards", []),
+                "actions": [
+                    {
+                        "player": act.get("player", ""),
+                        "action": act.get("action", ""),
+                        "amount": act.get("amount", 0.0)
+                    }
+                    for act in street.get("actions", [])
+                ]
+            }
+            for street in getattr(hand, "streets", [])
+        ],
+        "winners": [
+            {
+                "name": w["name"],
+                "amount": w["amount"]
+            }
+            for w in getattr(hand, "winners", [])
+        ],
+        "raw_text": hand.raw_text
+    }
+
+def build_cards_sql(cards: str) -> tuple[str, list]:
+    c = cards.strip().lower()
+    if not c or len(c) < 2:
+        return "", []
+    c1, c2 = c[0].upper(), c[1].upper()
+    if c1 == c2:
+        return "hero_cards LIKE ?", [f"{c1}% {c2}%"]
+    p1 = f"{c1}% {c2}%"
+    p2 = f"{c2}% {c1}%"
+    if len(c) >= 3 and c[2] == 's':
+        return "( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) = SUBSTR(hero_cards, 5, 1) )", [p1, p2]
+    elif len(c) >= 3 and c[2] == 'o':
+        return "( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) != SUBSTR(hero_cards, 5, 1) )", [p1, p2]
+    else:
+        return "(hero_cards LIKE ? OR hero_cards LIKE ?)", [p1, p2]
+
+def parse_natural_language_query(query: str) -> tuple[str, list, int]:
+    import re
+    query_lower = query.lower()
+    where_clauses = []
+    params = []
+    
+    pos_map = {
+        "utg": "UTG", "mp": "MP", "hj": "HJ", "co": "CO", "cutoff": "CO",
+        "btn": "BTN", "button": "BTN", "sb": "SB", "small blind": "SB",
+        "bb": "BB", "big blind": "BB"
+    }
+    for key, val in pos_map.items():
+        if f"from {key}" in query_lower or f"at {key}" in query_lower or f"in {key}" in query_lower or (f" {key} " in f" {query_lower} "):
+            where_clauses.append("hero_position = ?")
+            params.append(val)
+            break
+            
+    if "won" in query_lower or "winning" in query_lower or "profit" in query_lower:
+        where_clauses.append("hero_won > 0")
+    elif "lost" in query_lower or "losing" in query_lower or "loss" in query_lower:
+        where_clauses.append("hero_won < 0")
+        
+    if "3-bet" in query_lower or "3bet" in query_lower:
+        where_clauses.append("(raw_text LIKE '%3-bet%' OR raw_text LIKE '%3bet%')")
+    elif "4-bet" in query_lower or "4bet" in query_lower:
+        where_clauses.append("(raw_text LIKE '%4-bet%' OR raw_text LIKE '%4bet%')")
+    elif "all-in" in query_lower or "allin" in query_lower or "all in" in query_lower:
+        where_clauses.append("(raw_text LIKE '%all-in%' OR raw_text LIKE '%all in%')")
+
+    card_pattern = re.compile(r'\b([2-9tjqka]{2})([so]?)\b', re.IGNORECASE)
+    card_match = card_pattern.search(query_lower)
+    if card_match:
+        cards_input = card_match.group(1).upper()
+        suited_offsuited = card_match.group(2).lower()
+        c1, c2 = cards_input[0], cards_input[1]
+        if c1 == c2:
+            where_clauses.append("hero_cards LIKE ?")
+            params.append(f"{c1}% {c2}%")
+        else:
+            p1 = f"{c1}% {c2}%"
+            p2 = f"{c2}% {c1}%"
+            if suited_offsuited == 's':
+                where_clauses.append("( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) = SUBSTR(hero_cards, 5, 1) )")
+                params.extend([p1, p2])
+            elif suited_offsuited == 'o':
+                where_clauses.append("( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) != SUBSTR(hero_cards, 5, 1) )")
+                params.extend([p1, p2])
+            else:
+                where_clauses.append("(hero_cards LIKE ? OR hero_cards LIKE ?)")
+                params.extend([p1, p2])
+
+    if "coinpoker" in query_lower or "coin poker" in query_lower:
+        where_clauses.append("site = ?")
+        params.append("CoinPoker")
+    elif "acr" in query_lower or "wpn" in query_lower or "americas" in query_lower:
+        where_clauses.append("site = ?")
+        params.append("BetACR")
+
+    limit = 10
+    limit_match = re.search(r'\blimit\s+(\d+)\b', query_lower)
+    if not limit_match:
+        limit_match = re.search(r'\blast\s+(\d+)\b', query_lower)
+    if limit_match:
+        limit = int(limit_match.group(1))
+
+    if not where_clauses:
+        where_str = " WHERE (raw_text LIKE ? OR hand_id LIKE ? OR table_name LIKE ?)"
+        params = [f"%{query}%", f"%{query}%", f"%{query}%"]
+    else:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+    return where_str, params, limit
+
+def query_and_serialize_hands(db, settings, sql, params):
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            rows = c.execute(sql, params).fetchall()
+            if not rows:
+                return []
+            hand_ids = [row["hand_id"] for row in rows]
+            players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand = (
+                db._load_related_for_ids(c, hand_ids)
+            )
+            hands = [
+                db._hydrate_hand(
+                    row, players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand
+                )
+                for row in rows
+            ]
+            return [serialize_hand(h, settings) for h in hands]
+        finally:
+            conn.close()
 
 
 def _assert_select(query: str) -> str:
@@ -228,6 +411,145 @@ def database_overview(database: Optional[str] = None) -> Dict[str, Any]:
     return result
 
 
+@mcp.tool()
+def get_recent_hands(
+    limit: int = 10,
+    since: Optional[str] = None,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns the most recent hands played by the user.
+
+    Args:
+        limit: Max hands to return (default 10).
+        since: ISO timestamp YYYY-MM-DD to get hands after.
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    where_clauses = []
+    sql_params = []
+    if since:
+        where_clauses.append("date >= ?")
+        sql_params.append(since)
+    where_str = ""
+    if where_clauses:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, sql_params + [limit])
+
+
+@mcp.tool()
+def get_hands_by_cards(
+    cards: str,
+    limit: int = 10,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s').
+
+    Args:
+        cards: Card string like 'QQ', 'AK', '76s'.
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    cards_sql, cards_params = build_cards_sql(cards)
+    if not cards_sql:
+        raise ValueError("Invalid cards specified")
+    sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, cards_params + [limit])
+
+
+@mcp.tool()
+def get_biggest_winning_hands(
+    limit: int = 10,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns the biggest winning hands by profit.
+
+    Args:
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, [limit])
+
+
+@mcp.tool()
+def get_winrate_by_position(
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns winrate statistics broken down by position.
+
+    Args:
+        database: Optional database name (default: poker_hands).
+    """
+    db = HandDatabase(str(_resolve_db(database)))
+    sql = """
+        SELECT 
+            hero_position,
+            COUNT(*) as hands_played,
+            SUM(hero_won) as net_profit,
+            SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
+        FROM hands
+        WHERE hero_position IS NOT NULL AND hero_position != '?'
+        GROUP BY hero_position
+        ORDER BY net_profit DESC
+    """
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+
+@mcp.tool()
+def get_hands_by_position(
+    position: str,
+    limit: int = 10,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns hands played from a specific position.
+
+    Args:
+        position: Position like 'UTG', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB'.
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, [position.upper(), limit])
+
+
+@mcp.tool()
+def search_hands(
+    query: str,
+    limit: Optional[int] = None,
+    offset: int = 0,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Natural language search across hands (e.g. 'my last 3-bet pot from cutoff').
+
+    Args:
+        query: Natural language search query.
+        limit: Optional limit to override query limit.
+        offset: Pagination offset.
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    where_str, sql_params, parsed_limit = parse_natural_language_query(query)
+    lim = limit if limit is not None else parsed_limit
+    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
+    return query_and_serialize_hands(db, settings, sql, sql_params + [lim, offset])
+
+
 class _GrokHeaderMiddleware:
     """Make streamable-HTTP compatible with Grok's remote MCP client.
 
@@ -311,17 +633,26 @@ if __name__ == "__main__":
         mcp.run(transport="stdio")
     else:
         import uvicorn
+        from starlette.applications import Starlette
 
         port = int(os.environ.get("LEAKSNIPE_MCP_PORT", "8001"))
-        # Build Starlette MCP app, then wrap with Grok-friendly header middleware
-        app = mcp.http_app(
+        # Build Starlette MCP app for streamable-http
+        stream_app = mcp.http_app(
             path="/mcp",
             transport="streamable-http",
             json_response=True,
             stateless_http=True,
-            # Allow any Host (Cloudflare / Serveo tunnels rewrite Host header)
             host_origin_protection=False,
         )
+        # Build Starlette MCP app for sse
+        sse_app = mcp.http_app(
+            path="/sse",
+            transport="sse",
+            host_origin_protection=False,
+        )
+        # Combine routes
+        app = Starlette(routes=stream_app.routes + sse_app.routes, lifespan=stream_app.lifespan)
         app = _GrokHeaderMiddleware(app)
-        print(f"LeakSnipe MCP (Grok-compatible headers) on http://127.0.0.1:{port}/mcp")
+        
+        print(f"LeakSnipe MCP (Grok/Claude compatible) on http://127.0.0.1:{port} (serving /mcp and /sse)")
         uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

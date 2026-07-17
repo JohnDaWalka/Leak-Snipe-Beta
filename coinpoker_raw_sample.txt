@@ -1,0 +1,15 @@
+Total lines: 279
+
+=== First 5 lines ===
+Line 0: "Mono path[0] = 'C:/Program Files/CoinPoker/resources/unity-resources-win-x64/CoinPoker Game/CoinPoker_Data/Managed'\n"
+
+Line 1: "Mono config path = 'C:/Program Files/CoinPoker/resources/unity-resources-win-x64/CoinPoker Game/MonoBleedingEdge/etc'\n"
+
+Line 2: 'Input System module state changed to: Initialized.\n'
+
+Line 3: '[PhysX] Initialized MultithreadedTaskDispatcher with 24 workers.\n'
+
+Line 4: 'Loading player data from C:/Program Files/CoinPoker/resources/unity-resources-win-x64/CoinPoker Game/CoinPoker_Data/data.unity3d\n'
+
+=== Lines with gameHandId ===
+=== Lines with "cmd" or "Cmd" ===

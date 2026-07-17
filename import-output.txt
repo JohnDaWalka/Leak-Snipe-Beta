@@ -1,0 +1,2 @@
+saved=0 files_scanned=423
+counts {'BetACR': 7625, 'CoinPoker': 94}

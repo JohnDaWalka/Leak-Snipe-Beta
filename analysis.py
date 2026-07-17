@@ -87,7 +87,7 @@ class LeakEngine:
             "went_to_sd": 0, "won_at_sd": 0,
             "cbet_opportunities": 0, "cbet_made": 0,
             "three_bet_opportunities": 0, "three_bet_made": 0,
-            "by_position": defaultdict(lambda: {"total": 0, "vpip": 0, "pfr": 0}),
+            "by_position": defaultdict(lambda: {"total": 0, "vpip": 0, "pfr": 0, "won": 0.0, "lost": 0.0, "chip_net": 0.0}),
             "by_site": defaultdict(lambda: {
                 "total": 0, "vpip": 0, "pfr": 0,
                 "won": 0.0, "lost": 0.0, "chip_net": 0.0,
@@ -105,10 +105,13 @@ class LeakEngine:
 
             if h.is_tournament:
                 stats["by_site"][h.site]["chip_net"] += h.hero_won
+                stats["by_position"][pos]["chip_net"] += h.hero_won
             elif h.hero_won > 0:
                 stats["by_site"][h.site]["won"] += h.hero_won
+                stats["by_position"][pos]["won"] += h.hero_won
             else:
                 stats["by_site"][h.site]["lost"] += abs(h.hero_won)
+                stats["by_position"][pos]["lost"] += abs(h.hero_won)
 
             preflop = h.streets[0] if h.streets else None
             hero_vpip = False
@@ -207,10 +210,17 @@ class LeakEngine:
         }
         for pos, d in s["by_position"].items():
             pt = d["total"] or 1
+            won = round(d.get("won", 0.0), 2)
+            lost = round(d.get("lost", 0.0), 2)
+            chip_net = round(d.get("chip_net", 0.0), 0)
             result["by_position"][pos] = {
                 "total": d["total"],
                 "vpip": round(100 * d["vpip"] / pt, 1),
                 "pfr": round(100 * d["pfr"] / pt, 1),
+                "won": won,
+                "lost": lost,
+                "net": round(won - lost, 2),
+                "chip_net": chip_net,
             }
         for site, d in s["by_site"].items():
             st = d["total"] or 1

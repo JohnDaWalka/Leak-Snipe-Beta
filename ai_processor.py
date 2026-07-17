@@ -30,7 +30,7 @@ RESPONSES_PROMPT_VERSION = "2"
 
 OPENAI_CHAT_MODEL    = "gpt-4o-mini"      # live chat: fast + cheap
 OPENAI_SESSION_MODEL = "gpt-4o"           # session fallback if no stored prompt
-CLAUDE_MODEL         = "claude-3-5-sonnet-20241022"
+CLAUDE_MODEL         = "claude-sonnet-5"
 # ASI:One (Fetch.ai) — OpenAI-compatible chat completions API
 # Docs: https://docs.asi1.ai/documentation/build-with-asi-one/openai-compatibility
 # Models: https://docs.asi1.ai/documentation/models
@@ -2613,6 +2613,66 @@ class AIProcessor:
         )
         return _strip_tool_call_tags((final.choices[0].message.content or "").strip())
 
+    def _anthropic_tool_specs(self) -> List[dict]:
+        """Anthropic tool schemas (input_schema) converted from the shared OpenAI-style specs."""
+        specs = []
+        for t in self._coach_tool_specs():
+            fn = t["function"]
+            specs.append({
+                "name": fn["name"],
+                "description": fn["description"],
+                "input_schema": fn["parameters"],
+            })
+        return specs
+
+    def _anthropic_chat_with_tools(
+        self,
+        messages: List[dict],
+        *,
+        system: str,
+        max_tokens: int = 700,
+        temperature: float = 0.4,
+        max_rounds: int = 4,
+    ) -> str:
+        """Run a Claude chat completion with live DB tools (tool-use loop)."""
+        if not self._anthropic_client:
+            raise RuntimeError("Anthropic client not configured")
+        tools = self._anthropic_tool_specs()
+        convo = [m for m in messages if m["role"] != "system"]
+        for _ in range(max_rounds):
+            resp = self._anthropic_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                tools=tools,
+                messages=convo,
+            )
+            blocks = resp.content
+            tool_uses = [b for b in blocks if getattr(b, "type", None) == "tool_use"]
+            if resp.stop_reason == "tool_use" and tool_uses:
+                convo.append({"role": "assistant", "content": blocks})
+                results = []
+                for block in tool_uses:
+                    result = self._run_coach_tool(block.name, block.input or {})
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": json.dumps(result)[:6000],
+                    })
+                convo.append({"role": "user", "content": results})
+                continue
+            return "".join(b.text for b in blocks if getattr(b, "type", None) == "text").strip()
+        # Ran out of rounds — ask for a final answer without tools.
+        final = self._anthropic_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system,
+            messages=convo,
+        )
+        return "".join(b.text for b in final.content if getattr(b, "type", None) == "text").strip()
+
     def _asi1_research_chat(
         self,
         messages: List[dict],
@@ -3610,12 +3670,18 @@ class AIProcessor:
                     used = f"deepseek:{DEEPSEEK_CHAT_MODEL}"
                     break
                 if prov == "anthropic" and self._anthropic_client:
-                    resp = self._anthropic_client.messages.create(
-                        model=CLAUDE_MODEL, max_tokens=600,
-                        system=system,
-                        messages=[m for m in messages if m["role"] != "system"])
-                    reply = resp.content[0].text
-                    used = CLAUDE_MODEL
+                    if self._agentic_tools_on():
+                        reply = self._anthropic_chat_with_tools(
+                            messages, system=system, max_tokens=700, temperature=0.4
+                        )
+                        used = f"{CLAUDE_MODEL}+tools"
+                    else:
+                        resp = self._anthropic_client.messages.create(
+                            model=CLAUDE_MODEL, max_tokens=600,
+                            system=system,
+                            messages=[m for m in messages if m["role"] != "system"])
+                        reply = resp.content[0].text
+                        used = CLAUDE_MODEL
                     break
                 if prov == "ollama" and _ollama_available():
                     model = _best_analysis_model(self._settings)

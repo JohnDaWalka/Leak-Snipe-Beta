@@ -1,0 +1,9 @@
+{
+  "note": "Resume point for backfill_kv_from_r2 after hitting the Cloudflare KV free-tier daily write limit (2026-07-15). Free tier resets ~24h after first write that day, or resume immediately on a paid plan. Pass this object as `cursors` in the tools/call arguments, with a small batch (10-15) to stay under CPU-time limits.",
+  "worker_url": "https://leaksnipe-proxy.gitgoin87.workers.dev/mcp",
+  "cursors": {
+    "leaksnipe-hand-histories": "DONE",
+    "poker-hand-histories": "1-JTdCJTIydiUyMiUzQTElMkMlMjJzdGFydEFmdGVyJTIyJTNBJTIyaGFuZHMlMkZoYW5kcyUyRkFDUl8yNzcxMjc4NzMyLmpzb24lMjIlMkMlMjJ1dWlkJTIyJTNBJTIyN2U2MGExMWYzOTZhOGViYTZmNmY5YzYxMTQxYmYxNGMlMjIlN0Q=",
+    "poker-hands": "1-JTdCJTIydiUyMiUzQTElMkMlMjJzdGFydEFmdGVyJTIyJTNBJTIyaGFuZHMlMkZBQ1JfMjc2MzE2MDgwOC5qc29uJTIyJTJDJTIydXVpZCUyMiUzQSUyMjdlNjA5ZTc4YmY4NGM3NWU5MDQxNmQyMWIyMWI2NmQ2JTIyJTdE"
+  }
+}

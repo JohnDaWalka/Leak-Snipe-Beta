@@ -94,13 +94,18 @@ def _position_fact_rows(
     for hand_id, players in hands.items():
         seats = sorted({seat for seat, _name, _hero, _button in players})
         button_seat = players[0][3]
+        seen_players = set()
         for seat, name, is_hero, _button in players:
             if is_hero:
                 continue
+            name_lower = name.casefold()
+            if name_lower in seen_players:
+                continue
+            seen_players.add(name_lower)
             position = _position_for(seat, button_seat, seats)
             if not position:
                 continue
-            vpip, pfr = action_flags[(hand_id, name.casefold())]
+            vpip, pfr = action_flags[(hand_id, name_lower)]
             facts.append((hand_id, name, position, vpip, pfr, now))
     return facts
 

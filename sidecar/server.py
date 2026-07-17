@@ -9,6 +9,8 @@ import json
 import logging
 import os
 import platform
+import re
+import sqlite3
 import sys
 import threading
 import time
@@ -27,7 +29,7 @@ from config import bootstrap_env  # noqa: E402
 
 bootstrap_env(os.path.join(_REPO_ROOT, ".env"))
 
-from fastapi import FastAPI, HTTPException, Query  # noqa: E402
+from fastapi import FastAPI, HTTPException, Query, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -528,6 +530,53 @@ def diagnostics() -> Dict[str, Any]:
     }
 
 
+class DbProxyQueryRequest(BaseModel):
+    sql: str
+    params: List[Any] = Field(default_factory=list)
+
+
+# Only read-only statements may cross the public tunnel this endpoint sits behind
+# (db.leaksnipe.win -> here). No INSERT/UPDATE/DELETE/PRAGMA-write/ATTACH, ever.
+_DB_PROXY_READONLY_RE = re.compile(r"^\s*(SELECT\b|PRAGMA\s+table_info\s*\()", re.IGNORECASE)
+
+
+def _require_db_proxy_auth(request: Request) -> None:
+    key = os.environ.get("LEAKSNIPE_DB_PROXY_KEY")
+    if not key:
+        raise HTTPException(
+            status_code=503,
+            detail="LEAKSNIPE_DB_PROXY_KEY not set in .env — remote DB proxy is disabled",
+        )
+    header = request.headers.get("authorization") or ""
+    if header != f"Bearer {key}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@app.post("/query")
+def db_proxy_query(body: DbProxyQueryRequest, request: Request) -> Dict[str, Any]:
+    """Read-only SQL proxy for the remote MCP tauri_db_* tools (Cloudflare Tunnel -> here).
+
+    Bearer-token gated and restricted to SELECT / PRAGMA table_info — this is the
+    only sidecar endpoint meant to be reachable from outside localhost.
+    """
+    _require_db_proxy_auth(request)
+    sql = body.sql.strip()
+    if ";" in sql.rstrip(";"):
+        raise HTTPException(status_code=400, detail="Only a single statement is allowed")
+    if not _DB_PROXY_READONLY_RE.match(sql):
+        raise HTTPException(status_code=400, detail="Only SELECT and PRAGMA table_info queries are allowed")
+    db = _get_db()
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            cur = conn.execute(sql, body.params)
+            rows = [dict(r) for r in cur.fetchall()]
+        finally:
+            conn.close()
+    return {"success": True, "results": rows, "count": len(rows)}
+
+
 @app.get("/api/dashboard")
 def dashboard(wait: bool = Query(False, description="Block until stats are computed")) -> Dict[str, Any]:
     return _dashboard_payload(wait_for_stats=wait)
@@ -588,6 +637,7 @@ def recent_hands(
 @app.get("/api/live/current-hand")
 def live_current_hand(
     site: Optional[str] = Query(None, description="Filter by site (e.g. BetACR)"),
+    table: Optional[str] = Query(None, description="Filter by table name or window title"),
 ) -> Dict[str, Any]:
     """Latest imported hand with seat map — drives live table HUD."""
     settings = load_settings()
@@ -602,9 +652,15 @@ def live_current_hand(
     hands = db.get_hands_page(50, 0)
     hand = None
     site_filter = (site or "").strip()
+    table_filter = (table or "").strip().lower()
     for h in hands:
         if site_filter and h.site.lower() != site_filter.lower():
             continue
+        if table_filter:
+            h_table = (h.table_name or "").strip().lower()
+            h_tid = str(h.tournament_id or "").strip().lower()
+            if table_filter not in h_table and h_table not in table_filter and table_filter != h_tid:
+                continue
         hand = h
         break
     if hand is None and hands:

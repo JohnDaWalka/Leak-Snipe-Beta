@@ -76,6 +76,23 @@ export async function isLiveHudRunning(): Promise<boolean> {
 
 
 
+/**
+ * Fallback for the global hotkey (Ctrl+Shift+H), which can fail to fire if
+ * the OS/global-shortcut plugin doesn't have focus or isn't hooked. Toggles
+ * layout mode on the live-hud overlay from a plain button in the main
+ * window instead.
+ */
+
+export async function toggleHudLayoutMode(): Promise<void> {
+
+  if (!isTauri()) return;
+
+  await invoke("toggle_hud_layout_mode");
+
+}
+
+
+
 export async function diagnoseLiveHud(): Promise<HudDiagnostics> {
 
   if (!isTauri()) {

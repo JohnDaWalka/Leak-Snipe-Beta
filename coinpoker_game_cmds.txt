@@ -1,0 +1,103 @@
+Game command counts:
+game.seat: 72
+game.potInfo: 62
+game.user_turn: 37
+game.advance_player_action: 22
+game.seatInfo: 16
+game.dealer_cards: 8
+game.hand_strength: 8
+game.pre_hand_start_info: 4
+game.game_start: 4
+game.poker_odds: 4
+game.hole_cards: 3
+game.player_info: 3
+game.reveal_cards: 3
+game.winnerInfo: 3
+game.cumulativeWinnerInfo: 3
+game.reset_data: 3
+game.return_chips: 2
+game.rabbit_run_new: 2
+game.game_ready: 1
+game.throw_object: 1
+game.leave_Seat: 1
+
+=== Sample lines for each command ===
+--- game.seatInfo ---
+2026-07-01 04:59:13:583 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"seatResponseDataList\":[{\"betAmout\":0.0,\"caption\":\"Inuse\",\"newCaption\":\"Inuse\",\"seatId\":1,\"userChips\":31945.43,\"userName\":\"jdwalka\",\"userId\":413615,\"isPlaying\":false,\"lastAction\":null,\"optedForEVChop\":false,\"isAutoAction\":false,\"avatarId\":1,\"level\":0,\"device\":\"PC\",\"location\":null,\"isKycComplete\":true,\"isDealActivated\":false,\"sessionTimestamp\":null,\"selfBountyAmt\":0.0,\"selfBounty\":null,\"gameHandId\":null,\"initTimeStamp\":\"1782896353669\"},{\"betAmout\":0.0,\"caption\":\"Inuse\",\"newCaption\":\"Inuse\",\"seatId\":2,\"userChips\":19875.42,\"userName\":\"MrDan20xx\",\"userId\":16461
+
+--- game.game_ready ---
+2026-07-01 05:00:57:042 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"timeToStartGameInSec\":0,\"gameHandId\":\"91248600105\",\"initTimeStamp\":\"1782896457085\"}","Cmd":"game.game_ready","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.pre_hand_start_info ---
+2026-07-01 05:00:57:120 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"bbAmount\":700.0,\"sbAmount\":350.0,\"anteAmount\":88.0,\"gameId\":\"91248600106\",\"dealerSeatId\":2,\"tournamentCurrentStage\":2,\"dealButton\":null,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457155\"}","Cmd":"game.pre_hand_start_info","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.seat ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"caption\":\"Ante\",\"newCaption\":\"Ante\",\"userName\":\"jdwalka\",\"seatId\":1,\"betAmout\":88.0,\"userChips\":31857.43,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457200\"}","Cmd":"game.seat","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.potInfo ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"isRoundEnd\":false,\"totalPotAmount\":88.0,\"potAmountList\":[],\"potAmountListRit\":null,\"potAmountListRit2\":null,\"splashPotDropAmount\":0.0,\"potAmountListDoubleBoard\":null,\"isBombpotHand\":false,\"roundName\":\"ANTE\",\"isMegaSplash\":false,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457201\"}","Cmd":"game.potInfo","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.game_start ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"dealerSeatId\":2,\"tournamentCurrentStage\":0,\"dealButton\":null,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457826\"}","Cmd":"game.game_start","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.hole_cards ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"holeCards\":[{\"suit\":\"CLUBS\",\"value\":\"KING\"},{\"suit\":\"SPADES\",\"value\":\"FIVE\"}],\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457827\"}","Cmd":"game.hole_cards","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.player_info ---
+2026-07-01 05:00:57:759 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"extraHandTime\":95,\"extraTimePreflop\":10,\"playerCards\":[{\"suit\":\"CLUBS\",\"value\":\"KING\"},{\"suit\":\"SPADES\",\"value\":\"FIVE\"}],\"handRank\":null,\"handInfo\":null,\"userBestHand\":null,\"userBestHandDoubleBoard\":null,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457828\"}","Cmd":"game.player_info","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.advance_player_action ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"advanceActionId\":null,\"userTurnOptions\":{\"3\":[],\"4\":700,\"6\":[],\"5\":[],\"7\":null,\"8\":[],\"9\":null},\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457833\"}","Cmd":"game.advance_player_action","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.user_turn ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"userTurnOptions\":null,\"whoseTurn\":\"waywin\",\"turnTime\":15,\"timerName\":\"playerHandTimer\",\"roundMaxBet\":0.0,\"totalPot\":0.0,\"extraTimePreflop\":0,\"extraTurnTime\":0,\"extraTimerEnabled\":false,\"showBetTag\":null,\"showOpeningBetSizeOptions\":null,\"potRaiseValue\":null,\"potAmount\":null,\"callAmount\":null,\"valueAmount\":null,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896457834\"}","Cmd":"game.user_turn","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.dealer_cards ---
+2026-07-01 05:01:12:778 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"dealerCards\":{\"FLOP\":[{\"suit\":\"DIAMONDS\",\"value\":\"FIVE\"},{\"suit\":\"SPADES\",\"value\":\"SEVEN\"},{\"suit\":\"HEARTS\",\"value\":\"FOUR\"}],\"TURN\":null,\"RIVER\":null},\"dealerCardsRit\":{\"FLOP\":null,\"TURN\":null,\"RIVER\":null},\"dealerCardsDoubleBoard\":{\"FLOP\":null,\"TURN\":null,\"RIVER\":null},\"dealerCardsRit2\":{\"FLOP\":null,\"TURN\":null,\"RIVER\":null},\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896472853\"}","Cmd":"game.dealer_cards","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.hand_strength ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"userBestHand\":null,\"userBestHandDoubleBoard\":null,\"gameHandId\":null,\"initTimeStamp\":null}","Cmd":"game.hand_strength","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.return_chips ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"chipsToReturn\":2800.0,\"seatId\":5,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896503687\"}","Cmd":"game.return_chips","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.reveal_cards ---
+2026-07-01 05:01:44:335 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"userCardListMap\":[],\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896504403\"}","Cmd":"game.reveal_cards","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.rabbit_run_new ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"rabbitRunCards\":null,\"rabbitRunCardsDoubleBoard\":null,\"username\":null,\"gameHandId\":null,\"initTimeStamp\":null}","Cmd":"game.rabbit_run_new","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.winnerInfo ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"rit\":false,\"winnerDataList\":[{\"potId\":0,\"potAmount\":3678.0,\"potAmountAfterRake\":3678.0,\"winnerDetails\":{\"winnerList\":[{\"playerName\":\"chamji\",\"userBestHand\":null,\"index\":0,\"winAmountFromPot\":3678.0,\"actualWinAmount\":2190.0,\"IsInsured\":false}],\"kickerCards\":[],\"winnersHandInfo\":null}}],\"handType\":\"DEFAULT\",\"runId\":-1,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896504409\"}","Cmd":"game.winnerInfo","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.cumulativeWinnerInfo ---
+2026-07-01 05:01:44:399 [info]  [UNITY] Stdout: [Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"playersData\":[{\"playerName\":\"chamji\",\"handStrength\":null,\"handStrengthRit\":null,\"handStrengthRit2\":null,\"handStrengthDoubleBoard\":null}],\"winnersData\":[{\"userName\":\"chamji\",\"cumulativeProfitLoss\":2190.0,\"seatId\":5,\"winType\":null,\"winTypeRit\":null,\"winTypeRit2\":null,\"isEVChopWinner\":false,\"isSplashPotWinner\":false}],\"cumulativePotAmount\":3678.0,\"cumulativePotAmountWithoutRake\":3678.0,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896504409\"}","Cmd":"game.cumulativeWinnerInfo","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.reset_data ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"timestamp\":null,\"gameHandId\":\"91248600106\",\"initTimeStamp\":\"1782896508653\"}","Cmd":"game.reset_data","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.throw_object ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"objectId\":103,\"toSeatId\":7,\"fromSeatId\":5,\"timestamp\":null,\"gameHandId\":\"91248600107\",\"initTimeStamp\":\"1782896509864\"}","Cmd":"game.throw_object","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+
+--- game.poker_odds ---
+[Method] -> SendMessageToPipe - {"EventName":"extension_event","RequestId":null,"Data":{"cmd_bean":{"BeanData":"{\"timestamp\":null,\"hands\":[{\"seatId\":2,\"winChance\":63.74,\"tiePer\":17.58,\"winCount\":-1,\"tieCount\":-1,\"isAhead\":false},{\"seatId\":7,\"winChance\":36.26,\"tiePer\":17.58,\"winCount\":-1,\"tieCount\":-1,\"isAhead\":false}],\"gameHandId\":\"91248600107\",\"initTimeStamp\":null}","Cmd":"game.poker_odds","RoomName":"?3.30 After Dark Classic 912486"},"room_name":"?3.30 After Dark Classic 912486"}}
+
+

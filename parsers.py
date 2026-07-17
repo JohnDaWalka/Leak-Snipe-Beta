@@ -256,10 +256,25 @@ class HandParser:
             try:
                 h = self._parse_single(raw.strip(), detected)
                 if h and h.hand_id:
-                    # All WPN hands are BetACR
-                    if h.site in ("ACR", "BetACR"):
-                        h.site = "BetACR"
                     h.raw_text = raw.strip()
+                    if site == "CoinPoker":
+                        h.site = "CoinPoker"
+                        if h.hand_id.startswith("PS_"):
+                            h.hand_id = "CP_" + h.hand_id[3:]
+                        hero = self._resolve_hero(raw.strip(), "CoinPoker")
+                        if hero:
+                            # Re-extract hero cards
+                            hc = re.search(r"Dealt to " + re.escape(hero) + r" \[(.+?)\]", raw)
+                            if hc:
+                                h.hero_cards = hc.group(1)
+                            for seat_num, pinfo in h.players.items():
+                                pinfo["is_hero"] = (pinfo["name"] == hero)
+                            h.hero_won = self._calc_hero_result(h, hero)
+                            h.hero_position = self._calc_position(h, hero)
+                    else:
+                        # All WPN hands are BetACR
+                        if h.site in ("ACR", "BetACR"):
+                            h.site = "BetACR"
                     results.append(h)
             except Exception as e:
                 logging.error(f"Error parsing hand from {filepath}: {e}, content start: {str(raw.strip())[:100]}")
@@ -346,6 +361,20 @@ class HandParser:
         results: List[Hand] = []
         for hand_key in sorted(by_hand.keys()):
             hand_events = by_hand[hand_key]
+            
+            # Deduplicate events (e.g. from overlapping log segments during rotation)
+            seen_events = set()
+            deduped_events = []
+            for ev in hand_events:
+                cmd = ev["cmd"]
+                bean = ev.get("bean") or {}
+                ts = bean.get("initTimeStamp") or bean.get("initTimestamp") or ""
+                key = (cmd, ts) if ts else (cmd, json.dumps(bean, sort_keys=True))
+                if key in seen_events:
+                    continue
+                seen_events.add(key)
+                deduped_events.append(ev)
+            hand_events = deduped_events
             
             # Resolve actual hero for this specific hand based on players sitting at the table
             hand_players = set()
@@ -447,10 +476,13 @@ class HandParser:
     def _coinpoker_ingest_seats(
         h: Hand, seat_to_name: Dict[int, str], seats: List[Any], hero: str,
     ) -> None:
+        raw_max_seats = 0
         for seat in seats:
             if not isinstance(seat, dict):
                 continue
             seat_id = int(seat.get("seatId") or 0)
+            if seat_id > raw_max_seats:
+                raw_max_seats = seat_id
             name = str(seat.get("userName") or "").strip()
             if not seat_id or not name:
                 continue
@@ -463,6 +495,8 @@ class HandParser:
                 "stack": stack,
                 "is_hero": name == hero,
             }
+        if raw_max_seats > 0 and h.max_seats == 0:
+            h.max_seats = raw_max_seats
 
     @staticmethod
     def _coinpoker_card_str(card: Dict[str, Any]) -> str:
@@ -499,6 +533,7 @@ class HandParser:
         raw_lines: List[str] = []
         starting_stacks: Dict[str, float] = {}
         ending_stacks: Dict[str, float] = {}
+        revealed_cards: Dict[str, str] = {}
 
         for event in events:
             cmd = event["cmd"]
@@ -506,6 +541,9 @@ class HandParser:
             room = event.get("room") or ""
             ts = event.get("timestamp") or ""
             raw_lines.append(event.get("line") or "")
+
+            if ts and not h.date:
+                h.date = _parse_hand_datetime(ts, "", default_tz_key="")
 
             # Track starting and ending stacks chronologically
             if cmd in ("game.game_alldata", "game.seatInfo"):
@@ -623,6 +661,17 @@ class HandParser:
                         "stack": starting_stack,
                         "is_hero": player == hero,
                     }
+                # When a fold carries a non-zero betAmout on CoinPoker it means
+                # the player was in the blind and folded their option.  The
+                # betAmout is the blind they already posted but for which no
+                # explicit SB/BB event was emitted.  Inject a synthetic post
+                # so the investment is correctly counted in hero_won / winrate.
+                if action == "fold" and amount > 0:
+                    streets_map[street_name]["actions"].append({
+                        "player": player,
+                        "action": "post",
+                        "amount": amount,
+                    })
                 streets_map[street_name]["actions"].append({
                     "player": player,
                     "action": action,
@@ -684,11 +733,14 @@ class HandParser:
                         if not isinstance(winner, dict):
                             continue
                         name = str(winner.get("playerName") or "").strip()
-                        amount = float(
-                            winner.get("actualWinAmount")
-                            or winner.get("winAmountFromPot")
-                            or 0.0
-                        )
+                        win_from_pot = winner.get("winAmountFromPot")
+                        actual_win = winner.get("actualWinAmount")
+                        if win_from_pot is not None and float(win_from_pot) > 0:
+                            amount = float(win_from_pot)
+                        elif actual_win is not None:
+                            amount = float(actual_win)
+                        else:
+                            amount = 0.0
                         if name and amount > 0:
                             h.winners.append({"name": name, "amount": amount})
                 pot_amt = float(bean.get("cumulativePotAmount") or 0.0)
@@ -715,6 +767,18 @@ class HandParser:
                     if name == hero:
                         h.hero_won = profit
                         break
+            elif cmd == "game.reveal_cards":
+                for seat_data in bean.get("userCardListMap") or []:
+                    seat_id = int(seat_data.get("seatId") or 0)
+                    cards = [
+                        self._coinpoker_card_str(card)
+                        for card in (seat_data.get("cards") or [])
+                        if isinstance(card, dict)
+                    ]
+                    if seat_id and cards:
+                        player_name = seat_to_name.get(seat_id) or (h.players.get(seat_id) or {}).get("name")
+                        if player_name:
+                            revealed_cards[player_name] = " ".join(cards)
 
         if h.max_seats == 0 and h.players:
             h.max_seats = len(h.players)
@@ -723,7 +787,7 @@ class HandParser:
         h.streets = [streets_map[name] for name in street_order if name in streets_map]
         h.board_cards = board_cards or self._collect_board_from_streets(h.streets)
         h.hero_player = hero
-        h.raw_text = "\n".join(raw_lines)
+        h.raw_text = self._format_coinpoker_hand_text(h, revealed_cards)
 
         # Override the stack sizes of all players to be their starting stacks
         for seat_id, p_info in h.players.items():
@@ -731,26 +795,137 @@ class HandParser:
             if name in starting_stacks:
                 h.players[seat_id]["stack"] = starting_stacks[name]
 
-        # Calculate hero's net profit/loss using starting and ending stacks
-        if hero and hero in starting_stacks and hero in ending_stacks:
-            h.hero_won = ending_stacks[hero] - starting_stacks[hero]
-        else:
-            if h.hero_won == 0.0 and hero:
-                hero_profit = None
-                for event in events:
-                    if event["cmd"] != "game.cumulativeWinnerInfo":
-                        continue
-                    for winner in (event.get("bean") or {}).get("winnersData") or []:
-                        if str(winner.get("userName") or "").strip() == hero:
-                            hero_profit = float(winner.get("cumulativeProfitLoss") or 0.0)
-                            break
+        # Calculate hero's net profit/loss
+        hero_profit = None
+        if hero:
+            for event in events:
+                if event["cmd"] != "game.cumulativeWinnerInfo":
+                    continue
+                for winner in (event.get("bean") or {}).get("winnersData") or []:
+                    if str(winner.get("userName") or "").strip() == hero:
+                        hero_profit = float(winner.get("cumulativeProfitLoss") or 0.0)
+                        break
                 if hero_profit is not None:
-                    h.hero_won = hero_profit
-                else:
-                    h.hero_won = self._calc_hero_result(h, hero)
+                    break
+
+        if hero_profit is not None:
+            h.hero_won = hero_profit
+        elif hero:
+            h.hero_won = self._calc_hero_result(h, hero)
+        else:
+            h.hero_won = 0.0
 
         h.hero_position = self._calc_position(h, hero)
         return h if h.hand_id else None
+
+    def _format_coinpoker_hand_text(self, h: Hand, revealed_cards: Dict[str, str]) -> str:
+        def fmt_amt(val: float) -> str:
+            if val == int(val):
+                return str(int(val))
+            return f"{val:.2f}"
+
+        lines = []
+        # Header
+        date_str = h.date.strftime("%Y/%m/%d %H:%M:%S") if h.date else datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        lines.append(f"Hand #{h.hand_id} - Holdem (No Limit) - {date_str} UTC")
+        
+        # Table Info
+        lines.append(f"Table '{h.table_name}' {h.max_seats}-max Seat #{h.button_seat} is the button")
+        
+        # Players
+        for seat, p in sorted(h.players.items()):
+            lines.append(f"Seat {seat}: {p['name']} ({fmt_amt(p['stack'])})")
+            
+        # Blinds / posts vs preflop actions
+        preflop_posts = []
+        preflop_actions = []
+        for street in h.streets:
+            if street.get("name") == "Preflop":
+                for act in street.get("actions", []):
+                    if act.get("action") == "post":
+                        preflop_posts.append(act)
+                    else:
+                        preflop_actions.append(act)
+                        
+        for act in preflop_posts:
+            lines.append(f"{act['player']} posts {act['action']} {fmt_amt(act['amount'])}")
+            
+        lines.append("*** HOLE CARDS ***")
+        if h.hero_cards:
+            lines.append(f"Dealt to {h.hero_player} [{h.hero_cards}]")
+            
+        for act in preflop_actions:
+            p = act["player"]
+            a = act["action"]
+            amt = act["amount"]
+            if a == "fold":
+                lines.append(f"{p} folds")
+            elif a == "check":
+                lines.append(f"{p} checks")
+            elif a == "call":
+                lines.append(f"{p} calls {fmt_amt(amt)}")
+            elif a == "bet":
+                lines.append(f"{p} bets {fmt_amt(amt)}")
+            elif a == "raise":
+                lines.append(f"{p} raises to {fmt_amt(amt)}")
+            elif a == "return":
+                lines.append(f"Uncalled bet ({fmt_amt(amt)}) returned to {p}")
+                
+        # Other streets
+        flop_cards = []
+        turn_card = []
+        for street in h.streets:
+            name = street.get("name")
+            if name == "Preflop":
+                continue
+            cards = street.get("cards", [])
+            if name == "Flop" and cards:
+                flop_cards = cards
+                lines.append(f"*** FLOP *** [{' '.join(cards)}]")
+            elif name == "Turn" and cards:
+                turn_card = cards
+                lines.append(f"*** TURN *** [{' '.join(flop_cards)}] [{' '.join(cards)}]")
+            elif name == "River" and cards:
+                lines.append(f"*** RIVER *** [{' '.join(flop_cards + turn_card)}] [{' '.join(cards)}]")
+                
+            for act in street.get("actions", []):
+                p = act["player"]
+                a = act["action"]
+                amt = act["amount"]
+                if a == "fold":
+                    lines.append(f"{p} folds")
+                elif a == "check":
+                    lines.append(f"{p} checks")
+                elif a == "call":
+                    lines.append(f"{p} calls {fmt_amt(amt)}")
+                elif a == "bet":
+                    lines.append(f"{p} bets {fmt_amt(amt)}")
+                elif a == "raise":
+                    lines.append(f"{p} raises to {fmt_amt(amt)}")
+                elif a == "return":
+                    lines.append(f"Uncalled bet ({fmt_amt(amt)}) returned to {p}")
+                    
+        # Showdown
+        if revealed_cards:
+            lines.append("*** SHOW DOWN ***")
+            for player, cards_str in revealed_cards.items():
+                lines.append(f"{player} shows [{cards_str}]")
+                
+        # Summary
+        lines.append("*** SUMMARY ***")
+        lines.append(f"Total pot {fmt_amt(h.pot)} | Rake {fmt_amt(h.rake)}")
+        if h.board_cards:
+            lines.append(f"Board [{' '.join(h.board_cards)}]")
+            
+        for winner in h.winners:
+            w_name = winner.get("name")
+            w_amt = winner.get("amount", 0.0)
+            show_str = ""
+            if w_name in revealed_cards:
+                show_str = f" showed [{revealed_cards[w_name]}] and"
+            lines.append(f"Seat 0: {w_name}{show_str} won {fmt_amt(w_amt)}")
+            
+        return "\n".join(lines)
 
     def _parse_coinpoker(self, text: str) -> Optional[Hand]:
         """Parse CoinPoker hand history format."""
@@ -1413,18 +1588,18 @@ class HandParser:
             ]
             last_raise_idx: Optional[int] = None
             for i, (a, _) in enumerate(hero_acts):
-                if a == "raise":
+                if a in ("raise", "raises"):
                     last_raise_idx = i
             if last_raise_idx is not None:
                 if street.get("name") == "Preflop":
                     preflop_raised = True
                 street_total = hero_acts[last_raise_idx][1]
                 for a, amt in hero_acts[last_raise_idx + 1:]:
-                    if a in ("call", "bet"):
+                    if a in ("call", "calls", "bet", "bets"):
                         street_total += amt
             else:
                 street_total = sum(
-                    amt for a, amt in hero_acts if a in ("call", "bet", "post")
+                    amt for a, amt in hero_acts if a in ("call", "calls", "bet", "bets", "post", "posts")
                 )
             invested += street_total
 

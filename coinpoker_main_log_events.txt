@@ -1,0 +1,7 @@
+Total lines read (last 100KB): 236
+
+Game event lines found: 0
+
+Unique commands: []
+
+=== First 20 game events ===

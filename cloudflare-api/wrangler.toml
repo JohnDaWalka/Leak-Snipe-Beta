@@ -1,0 +1,12 @@
+name = "leaksnipe-data-api"
+main = "src/worker.js"
+compatibility_date = "2026-07-14"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "leaksnipe-hands"
+database_id = "9a9ba1db-5e5e-4fd7-9ff4-bcd6e25ddc2e"
+
+[[r2_buckets]]
+binding = "HAND_HISTORIES"
+bucket_name = "leaksnipe-hand-histories"

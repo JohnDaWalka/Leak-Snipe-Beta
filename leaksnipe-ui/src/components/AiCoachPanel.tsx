@@ -93,7 +93,7 @@ export function AiCoachPanel({
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [providerPref, setProviderPref] = useState("asi1");
+  const [providerPref, setProviderPref] = useState("anthropic");
   const [datasetHands, setDatasetHands] = useState<number | null>(null);
   const [webContextUsed, setWebContextUsed] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState<CoachMemoryEntry[] | null>(null);

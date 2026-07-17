@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { api, waitForBackend, type LiveCurrentHand, type PlayerHudStats, type Settings } from "../lib/api";
@@ -19,9 +19,12 @@ type SeatEntry = {
   name: string;
   xPct: number;
   yPct: number;
+  offsetKey: string;
 };
 
 const POLL_MS = 2000;
+
+const clampPct = (v: number) => Math.max(0.03, Math.min(0.97, v));
 
 export function LiveHudOverlay() {
   const [bounds, setBounds] = useState<TableBounds | null>(null);
@@ -85,8 +88,17 @@ export function LiveHudOverlay() {
       if (event.payload) setStatus(event.payload);
     });
 
+    // Fired by a global OS-level hotkey (Ctrl+Shift+H, registered in Rust)
+    // rather than a click, since the overlay is click-through until layout
+    // mode is already on — a click target inside it can't be what turns
+    // layout mode on in the first place.
+    const unlistenToggle = listen("hud-toggle-layout", () => {
+      setLayoutMode((v) => !v);
+    });
+
     return () => {
       cancelled = true;
+      void unlistenToggle.then((fn) => fn());
       void unlistenBounds.then((fn) => fn());
       void unlistenStatus.then((fn) => fn());
     };
@@ -98,7 +110,7 @@ export function LiveHudOverlay() {
       return preset;
     }
     const tl = (tableTitle ?? "").toLowerCase();
-    if (tl.includes("coinpoker")) return "CoinPoker";
+    if (tl.includes("coinpoker") || tl.includes("₮") || tl.includes("chp")) return "CoinPoker";
     if (tl.includes("acr") || tl.includes("winning")) return "BetACR";
     if (tl.includes("ggpoker") || tl.includes("gg poker")) return "GGPoker";
     return undefined;
@@ -109,7 +121,7 @@ export function LiveHudOverlay() {
       await waitForBackend();
       const cfg = await api.settings();
       const site = resolveHudSite(cfg, bounds?.title);
-      const live = await api.liveCurrentHand(site);
+      const live = await api.liveCurrentHand(site, bounds?.title || undefined);
       setSettings(cfg);
       setHand(live);
 
@@ -143,6 +155,8 @@ export function LiveHudOverlay() {
     return () => window.clearInterval(id);
   }, [refreshHand]);
 
+  const seatOffsets = (settings?.hud_seat_offsets as Record<string, { x: number; y: number }> | undefined) ?? {};
+
   const seats: SeatEntry[] = useMemo(() => {
     if (!hand?.seat_map) return [];
     const layoutKey = resolveLayoutKey(
@@ -163,15 +177,88 @@ export function LiveHudOverlay() {
       const slot = seatToSlot[seat];
       const pos = slot != null ? layout[slot] : undefined;
       if (!pos) continue;
+      const offsetKey = `${layoutKey}:${slot}`;
+      const override = seatOffsets[offsetKey];
       entries.push({
         seat,
         name,
-        xPct: clampSeatXPct(pos[0], edgeMarginPct),
-        yPct: pos[1],
+        xPct: clampSeatXPct(override ? override.x : pos[0], edgeMarginPct),
+        yPct: override ? override.y : pos[1],
+        offsetKey,
       });
     }
     return entries;
-  }, [hand, settings?.hud_seat_layout, edgeMarginPct]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hand, settings?.hud_seat_layout, edgeMarginPct, seatOffsets]);
+
+  const dragRef = useRef<{
+    offsetKey: string;
+    startClientX: number;
+    startClientY: number;
+    startXPct: number;
+    startYPct: number;
+  } | null>(null);
+  const [dragPreview, setDragPreview] = useState<Record<string, { x: number; y: number }>>({});
+
+  const persistSeatOffset = useCallback(
+    async (offsetKey: string, x: number, y: number) => {
+      const next = { ...seatOffsets, [offsetKey]: { x, y } };
+      try {
+        const updated = await api.updateSettings({ hud_seat_offsets: next });
+        setSettings(updated);
+      } catch {
+        // best-effort — badge keeps the dragged position locally via dragPreview
+        // even if the save failed; next full settings refresh may revert it.
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seatOffsets],
+  );
+
+  const handleSeatPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>, seat: SeatEntry) => {
+      if (!layoutMode || e.button !== 0) return;
+      e.stopPropagation();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      dragRef.current = {
+        offsetKey: seat.offsetKey,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        startXPct: seat.xPct,
+        startYPct: seat.yPct,
+      };
+    },
+    [layoutMode],
+  );
+
+  const handleSeatPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!drag || !rect || rect.width === 0 || rect.height === 0) return;
+    const dxPct = (e.clientX - drag.startClientX) / rect.width;
+    const dyPct = (e.clientY - drag.startClientY) / rect.height;
+    setDragPreview((prev) => ({
+      ...prev,
+      [drag.offsetKey]: {
+        x: clampPct(drag.startXPct + dxPct),
+        y: clampPct(drag.startYPct + dyPct),
+      },
+    }));
+  }, []);
+
+  const handleSeatPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      dragRef.current = null;
+      if (!drag) return;
+      (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      const preview = dragPreview[drag.offsetKey];
+      if (preview) {
+        void persistSeatOffset(drag.offsetKey, preview.x, preview.y);
+      }
+    },
+    [dragPreview, persistSeatOffset],
+  );
 
   return (
     <div
@@ -195,8 +282,9 @@ export function LiveHudOverlay() {
           className={`live-hud-layout-btn ${layoutMode ? "active" : ""}`}
           onClick={() => setLayoutMode((v) => !v)}
           onMouseDown={() => void applyClickthrough(false)}
+          title="This button only works while layout mode is already on (the overlay is click-through otherwise). Use Ctrl+Shift+H to toggle from anywhere."
         >
-          {layoutMode ? "Layout ON (drag status bar)" : "Layout"}
+          {layoutMode ? "Layout: ON — drag badges/status bar (Ctrl+Shift+H)" : "Layout: OFF (Ctrl+Shift+H)"}
         </button>
       </div>
 
@@ -207,22 +295,31 @@ export function LiveHudOverlay() {
             : "Play a hand — stats appear when ACR imports it"}
         </div>
       ) : (
-        seats.map((seat) => (
-          <div
-            key={`${seat.seat}-${seat.name}`}
-            className="live-seat-anchor"
-            style={{
-              left: `${seat.xPct * 100}%`,
-              top: `${seat.yPct * 100}%`,
-            }}
-          >
-            <SeatHudBadge
-              name={seat.name}
-              stats={statsMap[seat.name] ?? null}
-              layoutMode={layoutMode}
-            />
-          </div>
-        ))
+        seats.map((seat) => {
+          const preview = dragPreview[seat.offsetKey];
+          const xPct = preview?.x ?? seat.xPct;
+          const yPct = preview?.y ?? seat.yPct;
+          return (
+            <div
+              key={`${seat.seat}-${seat.name}`}
+              className={`live-seat-anchor ${layoutMode ? "draggable" : ""}`}
+              style={{
+                left: `${xPct * 100}%`,
+                top: `${yPct * 100}%`,
+              }}
+              onPointerDown={(e) => handleSeatPointerDown(e, seat)}
+              onPointerMove={handleSeatPointerMove}
+              onPointerUp={handleSeatPointerUp}
+            >
+              <SeatHudBadge
+                name={seat.name}
+                seat={seat.seat}
+                stats={statsMap[seat.name] ?? null}
+                layoutMode={layoutMode}
+              />
+            </div>
+          );
+        })
       )}
     </div>
   );

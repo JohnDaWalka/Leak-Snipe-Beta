@@ -216,7 +216,7 @@ def load_settings() -> Dict[str, Any]:
         "hud_locked": True,
         "hud_slot_positions": {},
         "hud_site_profiles": {},
-        "ai_provider": "asi1",
+        "ai_provider": "anthropic",
         "ollama_model": "",
         "ai_include_dataset_context": True,
         "ai_web_search_mode": "on_demand",

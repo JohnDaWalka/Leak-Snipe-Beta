@@ -1,0 +1,832 @@
+EEEEE                                                                    [100%]
+=================================== ERRORS ====================================
+__ ERROR at setup of CoinPokerJsonParserTests.test_detect_coinpoker_json_log __
+
+name = 'LeakSnipe', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    """
+    Poker Hand Tracker ù Multi-site poker hand tracking with AI analysis.
+    
+    This package provides:
+    - models: Hand and HandDatabase for data storage
+    - parsers: HandParser for parsing hand histories from multiple sites
+    - analysis: LeakEngine and SummaryGenerator for poker analytics
+    - importing: HandImporter and DriveHUD2Sync for hand import/sync
+    - themes: Color themes and utilities
+    - utils: Utility functions and helpers
+    """
+    
+    __version__ = "1.0.0"
+    
+    # Re-export main classes for convenience
+    from models import Hand, HandDatabase
+    from parsers import HandParser
+    from analysis import LeakEngine, SummaryGenerator
+>   from importing import HandImporter, DriveHUD2Sync
+E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+__init__.py:19: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x0000022BBA8F8AE0>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\logging.py:858: in pytest_runtest_setup
+    yield
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:536: in setup
+    col.setup()
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:678: in setup
+    init_mod = importtestmodule(self.path / "__init__.py", self.config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/Giuli/Projects/LeakSnipe/__init__.py')
+config = <_pytest.config.Config object at 0x0000022BBA016120>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'C:\Users\Giuli\Projects\LeakSnipe\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           __init__.py:19: in <module>
+E               from importing import HandImporter, DriveHUD2Sync
+E           E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:538: CollectError
+_ ERROR at setup of CoinPokerJsonParserTests.test_log_timestamp_stays_local_not_utc_shifted _
+
+name = 'LeakSnipe', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    """
+    Poker Hand Tracker ù Multi-site poker hand tracking with AI analysis.
+    
+    This package provides:
+    - models: Hand and HandDatabase for data storage
+    - parsers: HandParser for parsing hand histories from multiple sites
+    - analysis: LeakEngine and SummaryGenerator for poker analytics
+    - importing: HandImporter and DriveHUD2Sync for hand import/sync
+    - themes: Color themes and utilities
+    - utils: Utility functions and helpers
+    """
+    
+    __version__ = "1.0.0"
+    
+    # Re-export main classes for convenience
+    from models import Hand, HandDatabase
+    from parsers import HandParser
+    from analysis import LeakEngine, SummaryGenerator
+>   from importing import HandImporter, DriveHUD2Sync
+E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+__init__.py:19: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x0000022BBA8F89A0>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\logging.py:858: in pytest_runtest_setup
+    yield
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:529: in setup
+    raise exc[0].with_traceback(exc[1])
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:536: in setup
+    col.setup()
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:678: in setup
+    init_mod = importtestmodule(self.path / "__init__.py", self.config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/Giuli/Projects/LeakSnipe/__init__.py')
+config = <_pytest.config.Config object at 0x0000022BBA016120>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'C:\Users\Giuli\Projects\LeakSnipe\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           __init__.py:19: in <module>
+E               from importing import HandImporter, DriveHUD2Sync
+E           E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:538: CollectError
+_____ ERROR at setup of CoinPokerJsonParserTests.test_parse_fixture_hand ______
+
+name = 'LeakSnipe', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    """
+    Poker Hand Tracker ù Multi-site poker hand tracking with AI analysis.
+    
+    This package provides:
+    - models: Hand and HandDatabase for data storage
+    - parsers: HandParser for parsing hand histories from multiple sites
+    - analysis: LeakEngine and SummaryGenerator for poker analytics
+    - importing: HandImporter and DriveHUD2Sync for hand import/sync
+    - themes: Color themes and utilities
+    - utils: Utility functions and helpers
+    """
+    
+    __version__ = "1.0.0"
+    
+    # Re-export main classes for convenience
+    from models import Hand, HandDatabase
+    from parsers import HandParser
+    from analysis import LeakEngine, SummaryGenerator
+>   from importing import HandImporter, DriveHUD2Sync
+E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+__init__.py:19: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x0000022BBA67B880>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\logging.py:858: in pytest_runtest_setup
+    yield
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:529: in setup
+    raise exc[0].with_traceback(exc[1])
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:536: in setup
+    col.setup()
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:678: in setup
+    init_mod = importtestmodule(self.path / "__init__.py", self.config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/Giuli/Projects/LeakSnipe/__init__.py')
+config = <_pytest.config.Config object at 0x0000022BBA016120>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'C:\Users\Giuli\Projects\LeakSnipe\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           __init__.py:19: in <module>
+E               from importing import HandImporter, DriveHUD2Sync
+E           E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:538: CollectError
+_ ERROR at setup of CoinPokerJsonParserTests.test_parse_in_progress_hand_after_hole_cards _
+
+name = 'LeakSnipe', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    """
+    Poker Hand Tracker ù Multi-site poker hand tracking with AI analysis.
+    
+    This package provides:
+    - models: Hand and HandDatabase for data storage
+    - parsers: HandParser for parsing hand histories from multiple sites
+    - analysis: LeakEngine and SummaryGenerator for poker analytics
+    - importing: HandImporter and DriveHUD2Sync for hand import/sync
+    - themes: Color themes and utilities
+    - utils: Utility functions and helpers
+    """
+    
+    __version__ = "1.0.0"
+    
+    # Re-export main classes for convenience
+    from models import Hand, HandDatabase
+    from parsers import HandParser
+    from analysis import LeakEngine, SummaryGenerator
+>   from importing import HandImporter, DriveHUD2Sync
+E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+__init__.py:19: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x0000022BBA67A980>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\logging.py:858: in pytest_runtest_setup
+    yield
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:529: in setup
+    raise exc[0].with_traceback(exc[1])
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:536: in setup
+    col.setup()
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:678: in setup
+    init_mod = importtestmodule(self.path / "__init__.py", self.config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/Giuli/Projects/LeakSnipe/__init__.py')
+config = <_pytest.config.Config object at 0x0000022BBA016120>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'C:\Users\Giuli\Projects\LeakSnipe\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           __init__.py:19: in <module>
+E               from importing import HandImporter, DriveHUD2Sync
+E           E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:538: CollectError
+__ ERROR at setup of CoinPokerJsonParserTests.test_parse_rotated_main_log_gz __
+
+name = 'LeakSnipe', package = None
+
+    def import_module(name, package=None):
+        """Import a module.
+    
+        The 'package' argument is required when performing a relative import. It
+        specifies the package to use as the anchor point from which to resolve the
+        relative import to an absolute import.
+    
+        """
+        level = 0
+        if name.startswith('.'):
+            if not package:
+                raise TypeError("the 'package' argument is required to perform a "
+                                f"relative import for {name!r}")
+            for character in name:
+                if character != '.':
+                    break
+                level += 1
+>       return _bootstrap._gcd_import(name[level:], package, level)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    """
+    Poker Hand Tracker ù Multi-site poker hand tracking with AI analysis.
+    
+    This package provides:
+    - models: Hand and HandDatabase for data storage
+    - parsers: HandParser for parsing hand histories from multiple sites
+    - analysis: LeakEngine and SummaryGenerator for poker analytics
+    - importing: HandImporter and DriveHUD2Sync for hand import/sync
+    - themes: Color themes and utilities
+    - utils: Utility functions and helpers
+    """
+    
+    __version__ = "1.0.0"
+    
+    # Re-export main classes for convenience
+    from models import Hand, HandDatabase
+    from parsers import HandParser
+    from analysis import LeakEngine, SummaryGenerator
+>   from importing import HandImporter, DriveHUD2Sync
+E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+__init__.py:19: ImportError
+
+The above exception was the direct cause of the following exception:
+
+cls = <class '_pytest.runner.CallInfo'>
+func = <function call_and_report.<locals>.<lambda> at 0x0000022BBA67B920>
+when = 'setup'
+reraise = (<class '_pytest.outcomes.Exit'>, <class 'KeyboardInterrupt'>)
+
+    @classmethod
+    def from_call(
+        cls,
+        func: Callable[[], TResult],
+        when: Literal["collect", "setup", "call", "teardown"],
+        reraise: type[BaseException] | tuple[type[BaseException], ...] | None = None,
+    ) -> CallInfo[TResult]:
+        """Call func, wrapping the result in a CallInfo.
+    
+        :param func:
+            The function to call. Called without arguments.
+        :type func: Callable[[], _pytest.runner.TResult]
+        :param when:
+            The phase in which the function is called.
+        :param reraise:
+            Exception or exceptions that shall propagate if raised by the
+            function, instead of being wrapped in the CallInfo.
+        """
+        excinfo = None
+        instant = timing.Instant()
+        try:
+>           result: TResult | None = func()
+                                     ^^^^^^
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:361: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:250: in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\pluggy\_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\logging.py:858: in pytest_runtest_setup
+    yield
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\capture.py:895: in pytest_runtest_setup
+    return (yield)
+            ^^^^^
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:170: in pytest_runtest_setup
+    item.session._setupstate.setup(item)
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:529: in setup
+    raise exc[0].with_traceback(exc[1])
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\runner.py:536: in setup
+    col.setup()
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:678: in setup
+    init_mod = importtestmodule(self.path / "__init__.py", self.config)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = WindowsPath('C:/Users/Giuli/Projects/LeakSnipe/__init__.py')
+config = <_pytest.config.Config object at 0x0000022BBA016120>
+
+    def importtestmodule(
+        path: Path,
+        config: Config,
+    ):
+        # We assume we are only called once per module.
+        importmode = config.getoption("--import-mode")
+        try:
+            mod = import_path(
+                path,
+                mode=importmode,
+                root=config.rootpath,
+                consider_namespace_packages=config.getini("consider_namespace_packages"),
+            )
+        except SyntaxError as e:
+            raise nodes.Collector.CollectError(
+                ExceptionInfo.from_current().getrepr(style="short")
+            ) from e
+        except ImportPathMismatchError as e:
+            raise nodes.Collector.CollectError(
+                "import file mismatch:\n"
+                "imported module {!r} has this __file__ attribute:\n"
+                "  {}\n"
+                "which is not the same as the test file we want to collect:\n"
+                "  {}\n"
+                "HINT: remove __pycache__ / .pyc files and/or use a "
+                "unique basename for your test file modules".format(*e.args)
+            ) from e
+        except ImportError as e:
+            exc_info = ExceptionInfo.from_current()
+            if config.get_verbosity() < 2:
+                exc_info.traceback = exc_info.traceback.filter(filter_traceback)
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
+            formatted_tb = str(exc_repr)
+>           raise nodes.Collector.CollectError(
+                f"ImportError while importing test module '{path}'.\n"
+                "Hint: make sure your test modules/packages have valid Python names.\n"
+                "Traceback:\n"
+                f"{formatted_tb}"
+            ) from e
+E           _pytest.nodes.Collector.CollectError: ImportError while importing test module 'C:\Users\Giuli\Projects\LeakSnipe\__init__.py'.
+E           Hint: make sure your test modules/packages have valid Python names.
+E           Traceback:
+E           C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.13_3.13.3824.0_x64__qbz5n2kfra8p0\Lib\importlib\__init__.py:88: in import_module
+E               return _bootstrap._gcd_import(name[level:], package, level)
+E                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           __init__.py:19: in <module>
+E               from importing import HandImporter, DriveHUD2Sync
+E           E   ImportError: cannot import name 'DriveHUD2Sync' from 'importing' (C:\Users\Giuli\Projects\LeakSnipe\importing.py)
+
+..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\_pytest\python.py:538: CollectError
+=========================== short test summary info ===========================
+ERROR tests/test_coinpoker.py::CoinPokerJsonParserTests::test_detect_coinpoker_json_log
+ERROR tests/test_coinpoker.py::CoinPokerJsonParserTests::test_log_timestamp_stays_local_not_utc_shifted
+ERROR tests/test_coinpoker.py::CoinPokerJsonParserTests::test_parse_fixture_hand
+ERROR tests/test_coinpoker.py::CoinPokerJsonParserTests::test_parse_in_progress_hand_after_hole_cards
+ERROR tests/test_coinpoker.py::CoinPokerJsonParserTests::test_parse_rotated_main_log_gz
+5 errors in 1.28s

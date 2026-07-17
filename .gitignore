@@ -87,6 +87,7 @@ PokerBuild/poker-trainer/*.exe
 *.db
 *.csv
 dh2_sync_state.json
+cloudflare-api/.local/
 
 # Build output dirs
 PokerBuild/.tmp.driveupload/

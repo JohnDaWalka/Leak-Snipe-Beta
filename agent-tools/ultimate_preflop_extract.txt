@@ -1,0 +1,694 @@
+--- PAGE 1 ---
+MTT EDITION · 2026
+J O N AT H A N L I T T L E ' S
+THE ULTIMATE
+TOURNAMENT
+PREFLOP GUIDE
+Over 500 GTO ranges covering every position, every key stack depth, every
+preflop response, from opening the pot through 4-bet defense.
+80 50 30 20 12
+BB BB BB BB BB
+
+--- PAGE 2 ---
+CONTENTS
+WHAT'S INSIDE
+01 How To Read Your Charts Grid, colors & frequencies 03
+02 Raise First In (RFI) 40 charts · every position · 5 stack depths 04
+03 80 Big Blinds vs RFI · vs 3-Bet · vs 4-Bet 13
+04 50 Big Blinds vs RFI · vs 3-Bet · vs 4-Bet 29
+05 30 Big Blinds vs RFI · vs 3-Bet · vs 4-Bet 46
+06 20 Big Blinds vs RFI · vs 3-Bet · vs 4-Bet 63
+07 12 Big Blinds vs RFI · vs 3-Bet 81
+08 Keep Sharpening Your Edge Train with PokerCoaching · PeakGTO 96
+507 5 8 4
+GTO CHARTS STACK DEPTHS TABLE POSITIONS SCENARIO TYPES
+POKERCOACHING.COM 02
+
+--- PAGE 3 ---
+01 · GETTING STARTED
+HOW TO READ YOUR CHARTS
+Every chart in this guide is a 13×13 grid of all 169 starting hands. Learn to read one, and you can read every
+chart in this guide.
+ANATOMY OF A CHART KNOW YOUR POSITION
+POCKET PAIRS Run down the diagonal, from AA to 22. UTG Under The Gun CO Cutoff
+UTG+1 Under The Gun +1 BTN Button
+SUITED Fill the upper-right triangle: AKs, QJs, T9s, etc.
+LJ Lojack SB Small Blind
+OFFSUIT Fill the lower-left triangle: AKo, QJo, T9o, etc.
+HJ Hijack BB Big Blind
+WHAT YOU'LL FIND INSIDE · FOUR SITUATIONS
+RFI (RAISE FIRST IN) which hands to open when everyone folds before you.
+VS RFI how to respond when someone raises before you.
+VS 3-BET how to continue after you open and face a 3-bet.
+VS 4-BET how to continue after you 3-bet and face a 4-bet.
+These charts are an excellent default starting point, and you only need to deviate from them when you know how
+to exploit your opponents based on their mistakes.
+POKERCOACHING.COM 03
+
+--- PAGE 4 ---
+80BB RAISE FIRST IN
+UTG · RFI UTG+1 · RFI
+LJ · RFI HJ · RFI
+CO · RFI BTN · RFI
+POKERCOACHING.COM 04
+
+--- PAGE 5 ---
+80BB RAISE FIRST IN
+SB · RFI
+POKERCOACHING.COM 05
+
+--- PAGE 6 ---
+50BB RAISE FIRST IN
+UTG · RFI UTG+1 · RFI
+LJ · RFI HJ · RFI
+CO · RFI BTN · RFI
+POKERCOACHING.COM 06
+
+--- PAGE 7 ---
+50BB RAISE FIRST IN
+SB · RFI
+POKERCOACHING.COM 07
+
+--- PAGE 8 ---
+30BB RAISE FIRST IN
+UTG · RFI UTG+1 · RFI
+LJ · RFI HJ · RFI
+CO · RFI BTN · RFI
+POKERCOACHING.COM 08
+
+--- PAGE 9 ---
+30BB RAISE FIRST IN
+SB · RFI
+POKERCOACHING.COM 09
+
+--- PAGE 10 ---
+20BB RAISE FIRST IN
+UTG · RFI UTG+1 · RFI
+LJ · RFI HJ · RFI
+CO · RFI BTN · RFI
+POKERCOACHING.COM 10
+
+--- PAGE 11 ---
+20BB RAISE FIRST IN
+SB · RFI
+POKERCOACHING.COM 11
+
+--- PAGE 12 ---
+12BB RAISE FIRST IN
+UTG · RFI UTG+1 · RFI
+LJ · RFI HJ · RFI
+CO · RFI BTN · RFI
+POKERCOACHING.COM 12
+
+--- PAGE 13 ---
+80BB VS RFI
+UTG+1 vs UTG · RFI LJ vs UTG · RFI
+HJ vs UTG · RFI CO vs UTG · RFI
+BTN vs UTG · RFI SB vs UTG · RFI
+POKERCOACHING.COM 13
+
+--- PAGE 14 ---
+80BB VS RFI
+BB vs UTG · RFI LJ vs UTG+1 · RFI
+HJ vs UTG+1 · RFI CO vs UTG+1 · RFI
+BTN vs UTG+1 · RFI SB vs UTG+1 · RFI
+POKERCOACHING.COM 14
+
+--- PAGE 15 ---
+80BB VS RFI
+BB vs UTG+1 · RFI HJ vs LJ · RFI
+CO vs LJ · RFI BTN vs LJ · RFI
+SB vs LJ · RFI BB vs LJ · RFI
+POKERCOACHING.COM 15
+
+--- PAGE 16 ---
+80BB VS RFI
+CO vs HJ · RFI BTN vs HJ · RFI
+SB vs HJ · RFI BB vs HJ · RFI
+BTN vs CO · RFI SB vs CO · RFI
+POKERCOACHING.COM 16
+
+--- PAGE 17 ---
+80BB VS RFI
+BB vs CO · RFI SB vs BTN · RFI
+BB vs BTN · RFI BB vs SB · RFI
+BB vs SB · Limp
+POKERCOACHING.COM 17
+
+--- PAGE 18 ---
+80BB VS 3-BET
+UTG vs UTG+1 · 3-Bet UTG vs LJ · 3-Bet
+UTG vs HJ · 3-Bet UTG vs CO · 3-Bet
+UTG vs BTN · 3-Bet UTG vs SB · 3-Bet
+POKERCOACHING.COM 18
+
+--- PAGE 19 ---
+80BB VS 3-BET
+UTG vs BB · 3-Bet UTG+1 vs LJ · 3-Bet
+UTG+1 vs HJ · 3-Bet UTG+1 vs CO · 3-Bet
+UTG+1 vs BTN · 3-Bet UTG+1 vs SB · 3-Bet
+POKERCOACHING.COM 19
+
+--- PAGE 20 ---
+80BB VS 3-BET
+UTG+1 vs BB · 3-Bet LJ vs HJ · 3-Bet
+LJ vs CO · 3-Bet LJ vs BTN · 3-Bet
+LJ vs SB · 3-Bet LJ vs BB · 3-Bet
+POKERCOACHING.COM 20
+
+--- PAGE 21 ---
+80BB VS 3-BET
+HJ vs CO · 3-Bet HJ vs BTN · 3-Bet
+HJ vs SB · 3-Bet HJ vs BB · 3-Bet
+CO vs BTN · 3-Bet CO vs SB · 3-Bet
+POKERCOACHING.COM 21
+
+--- PAGE 22 ---
+80BB VS 3-BET
+CO vs BB · 3-Bet BTN vs SB · 3-Bet
+BTN vs BB · 3-Bet SB vs BB · 3-Bet
+POKERCOACHING.COM 22
+
+--- PAGE 23 ---
+80BB VS 4-BET
+UTG+1 vs UTG · 4-Bet UTG+1 vs UTG · 4-Bet All-In
+LJ vs UTG · 4-Bet LJ vs UTG · 4-Bet All-In
+HJ vs UTG · 4-Bet CO vs UTG · 4-Bet
+POKERCOACHING.COM 23
+
+--- PAGE 24 ---
+80BB VS 4-BET
+BTN vs UTG · 4-Bet SB vs UTG · 4-Bet All-In
+BB vs UTG · 4-Bet BB vs UTG · 4-Bet All-In
+LJ vs UTG+1 · 4-Bet HJ vs UTG+1 · 4-Bet
+POKERCOACHING.COM 24
+
+--- PAGE 25 ---
+80BB VS 4-BET
+CO vs UTG+1 · 4-Bet BTN vs UTG+1 · 4-Bet
+SB vs UTG+1 · 4-Bet All-In BB vs UTG+1 · 4-Bet All-In
+HJ vs LJ · 4-Bet CO vs LJ · 4-Bet
+POKERCOACHING.COM 25
+
+--- PAGE 26 ---
+80BB VS 4-BET
+BTN vs LJ · 4-Bet SB vs LJ · 4-Bet
+SB vs LJ · 4-Bet All-In BB vs LJ · 4-Bet All-In
+CO vs HJ · 4-Bet BTN vs HJ · 4-Bet
+POKERCOACHING.COM 26
+
+--- PAGE 27 ---
+80BB VS 4-BET
+SB vs HJ · 4-Bet BB vs HJ · 4-Bet
+BTN vs CO · 4-Bet SB vs CO · 4-Bet
+SB vs CO · 4-Bet All-In BB vs CO · 4-Bet
+POKERCOACHING.COM 27
+
+--- PAGE 28 ---
+80BB VS 4-BET
+SB vs BTN · 4-Bet SB vs BTN · 4-Bet All-In
+BB vs BTN · 4-Bet BB vs BTN · 4-Bet All-In
+BB vs SB · 4-Bet
+POKERCOACHING.COM 28
+
+--- PAGE 29 ---
+50BB VS RFI
+UTG+1 vs UTG · RFI LJ vs UTG · RFI
+HJ vs UTG · RFI CO vs UTG · RFI
+BTN vs UTG · RFI SB vs UTG · RFI
+POKERCOACHING.COM 29
+
+--- PAGE 30 ---
+50BB VS RFI
+BB vs UTG · RFI LJ vs UTG+1 · RFI
+HJ vs UTG+1 · RFI CO vs UTG+1 · RFI
+BTN vs UTG+1 · RFI SB vs UTG+1 · RFI
+POKERCOACHING.COM 30
+
+--- PAGE 31 ---
+50BB VS RFI
+BB vs UTG+1 · RFI HJ vs LJ · RFI
+CO vs LJ · RFI BTN vs LJ · RFI
+SB vs LJ · RFI BB vs LJ · RFI
+POKERCOACHING.COM 31
+
+--- PAGE 32 ---
+50BB VS RFI
+CO vs HJ · RFI BTN vs HJ · RFI
+SB vs HJ · RFI BB vs HJ · RFI
+BTN vs CO · RFI SB vs CO · RFI
+POKERCOACHING.COM 32
+
+--- PAGE 33 ---
+50BB VS RFI
+BB vs CO · RFI SB vs BTN · RFI
+BB vs BTN · RFI BB vs SB · RFI
+BB vs SB · Limp
+POKERCOACHING.COM 33
+
+--- PAGE 34 ---
+50BB VS 3-BET
+UTG vs UTG+1 · 3-Bet UTG vs LJ · 3-Bet
+UTG vs HJ · 3-Bet UTG vs CO · 3-Bet
+UTG vs BTN · 3-Bet UTG vs SB · 3-Bet
+POKERCOACHING.COM 34
+
+--- PAGE 35 ---
+50BB VS 3-BET
+UTG vs BB · 3-Bet UTG+1 vs LJ · 3-Bet
+UTG+1 vs HJ · 3-Bet UTG+1 vs CO · 3-Bet
+UTG+1 vs BTN · 3-Bet UTG+1 vs SB · 3-Bet
+POKERCOACHING.COM 35
+
+--- PAGE 36 ---
+50BB VS 3-BET
+UTG+1 vs BB · 3-Bet LJ vs HJ · 3-Bet
+LJ vs CO · 3-Bet LJ vs BTN · 3-Bet
+LJ vs SB · 3-Bet LJ vs BB · 3-Bet
+POKERCOACHING.COM 36
+
+--- PAGE 37 ---
+50BB VS 3-BET
+HJ vs CO · 3-Bet HJ vs BTN · 3-Bet
+HJ vs SB · 3-Bet HJ vs BB · 3-Bet
+CO vs BTN · 3-Bet CO vs SB · 3-Bet
+POKERCOACHING.COM 37
+
+--- PAGE 38 ---
+50BB VS 3-BET
+CO vs BB · 3-Bet BTN vs SB · 3-Bet
+BTN vs BB · 3-Bet BTN vs BB · 3-Bet All-In
+SB vs BB · 3-Bet
+POKERCOACHING.COM 38
+
+--- PAGE 39 ---
+50BB VS 4-BET
+UTG+1 vs UTG · 4-Bet UTG+1 vs UTG · 4-Bet All-In
+LJ vs UTG · 4-Bet LJ vs UTG · 4-Bet All-In
+HJ vs UTG · 4-Bet HJ vs UTG · 4-Bet All-In
+POKERCOACHING.COM 39
+
+--- PAGE 40 ---
+50BB VS 4-BET
+CO vs UTG · 4-Bet CO vs UTG · 4-Bet All-In
+BTN vs UTG · 4-Bet SB vs UTG · 4-Bet All-In
+BB vs UTG · 4-Bet All-In LJ vs UTG+1 · 4-Bet
+POKERCOACHING.COM 40
+
+--- PAGE 41 ---
+50BB VS 4-BET
+LJ vs UTG+1 · 4-Bet All-In HJ vs UTG+1 · 4-Bet
+HJ vs UTG+1 · 4-Bet All-In CO vs UTG+1 · 4-Bet
+CO vs UTG+1 · 4-Bet All-In BTN vs UTG+1 · 4-Bet
+POKERCOACHING.COM 41
+
+--- PAGE 42 ---
+50BB VS 4-BET
+BTN vs UTG+1 · 4-Bet All-In SB vs UTG+1 · 4-Bet All-In
+BB vs UTG+1 · 4-Bet All-In HJ vs LJ · 4-Bet
+HJ vs LJ · 4-Bet All-In CO vs LJ · 4-Bet
+POKERCOACHING.COM 42
+
+--- PAGE 43 ---
+50BB VS 4-BET
+CO vs LJ · 4-Bet All-In BTN vs LJ · 4-Bet
+BTN vs LJ · 4-Bet All-In SB vs LJ · 4-Bet All-In
+BB vs LJ · 4-Bet All-In CO vs HJ · 4-Bet
+POKERCOACHING.COM 43
+
+--- PAGE 44 ---
+50BB VS 4-BET
+CO vs HJ · 4-Bet All-In BTN vs HJ · 4-Bet
+BTN vs HJ · 4-Bet All-In SB vs HJ · 4-Bet All-In
+BB vs HJ · 4-Bet All-In BTN vs CO · 4-Bet
+POKERCOACHING.COM 44
+
+--- PAGE 45 ---
+50BB VS 4-BET
+SB vs CO · 4-Bet All-In BB vs CO · 4-Bet All-In
+SB vs BTN · 4-Bet All-In BB vs BTN · 4-Bet All-In
+BB vs SB · 4-Bet All-In
+POKERCOACHING.COM 45
+
+--- PAGE 46 ---
+30BB VS RFI
+UTG+1 vs UTG · RFI LJ vs UTG · RFI
+HJ vs UTG · RFI CO vs UTG · RFI
+BTN vs UTG · RFI SB vs UTG · RFI
+POKERCOACHING.COM 46
+
+--- PAGE 47 ---
+30BB VS RFI
+BB vs UTG · RFI LJ vs UTG+1 · RFI
+HJ vs UTG+1 · RFI CO vs UTG+1 · RFI
+BTN vs UTG+1 · RFI SB vs UTG+1 · RFI
+POKERCOACHING.COM 47
+
+--- PAGE 48 ---
+30BB VS RFI
+BB vs UTG+1 · RFI HJ vs LJ · RFI
+CO vs LJ · RFI BTN vs LJ · RFI
+SB vs LJ · RFI BB vs LJ · RFI
+POKERCOACHING.COM 48
+
+--- PAGE 49 ---
+30BB VS RFI
+CO vs HJ · RFI BTN vs HJ · RFI
+SB vs HJ · RFI BB vs HJ · RFI
+BTN vs CO · RFI SB vs CO · RFI
+POKERCOACHING.COM 49
+
+--- PAGE 50 ---
+30BB VS RFI
+BB vs CO · RFI SB vs BTN · RFI
+BB vs BTN · RFI BB vs SB · RFI
+BB vs SB · Limp
+POKERCOACHING.COM 50
+
+--- PAGE 51 ---
+30BB VS 3-BET
+UTG vs UTG+1 · 3-Bet UTG vs LJ · 3-Bet
+UTG vs HJ · 3-Bet UTG vs CO · 3-Bet
+UTG vs BTN · 3-Bet UTG vs SB · 3-Bet
+POKERCOACHING.COM 51
+
+--- PAGE 52 ---
+30BB VS 3-BET
+UTG vs SB · 3-Bet All-In UTG vs BB · 3-Bet
+UTG+1 vs LJ · 3-Bet UTG+1 vs HJ · 3-Bet
+UTG+1 vs CO · 3-Bet UTG+1 vs BTN · 3-Bet
+POKERCOACHING.COM 52
+
+--- PAGE 53 ---
+30BB VS 3-BET
+UTG+1 vs SB · 3-Bet UTG+1 vs SB · 3-Bet All-In
+UTG+1 vs BB · 3-Bet UTG+1 vs BB · 3-Bet All-In
+LJ vs HJ · 3-Bet LJ vs CO · 3-Bet
+POKERCOACHING.COM 53
+
+--- PAGE 54 ---
+30BB VS 3-BET
+LJ vs BTN · 3-Bet LJ vs BTN · 3-Bet All-In
+LJ vs SB · 3-Bet LJ vs SB · 3-Bet All-In
+LJ vs BB · 3-Bet LJ vs BB · 3-Bet All-In
+POKERCOACHING.COM 54
+
+--- PAGE 55 ---
+30BB VS 3-BET
+HJ vs CO · 3-Bet HJ vs BTN · 3-Bet
+HJ vs BTN · 3-Bet All-In HJ vs SB · 3-Bet
+HJ vs SB · 3-Bet All-In HJ vs BB · 3-Bet
+POKERCOACHING.COM 55
+
+--- PAGE 56 ---
+30BB VS 3-BET
+HJ vs BB · 3-Bet All-In CO vs BTN · 3-Bet
+CO vs BTN · 3-Bet All-In CO vs SB · 3-Bet
+CO vs SB · 3-Bet All-In CO vs BB · 3-Bet
+POKERCOACHING.COM 56
+
+--- PAGE 57 ---
+30BB VS 3-BET
+CO vs BB · 3-Bet All-In BTN vs SB · 3-Bet
+BTN vs BB · 3-Bet BTN vs BB · 3-Bet All-In
+SB vs BB · 3-Bet SB vs BB · 3-Bet All-In
+POKERCOACHING.COM 57
+
+--- PAGE 58 ---
+30BB VS 4-BET
+UTG+1 vs UTG · 4-Bet All-In LJ vs UTG · 4-Bet All-In
+HJ vs UTG · 4-Bet All-In CO vs UTG · 4-Bet All-In
+BTN vs UTG · 4-Bet All-In SB vs UTG · 4-Bet All-In
+POKERCOACHING.COM 58
+
+--- PAGE 59 ---
+30BB VS 4-BET
+BB vs UTG · 4-Bet All-In LJ vs UTG+1 · 4-Bet All-In
+HJ vs UTG+1 · 4-Bet All-In CO vs UTG+1 · 4-Bet All-In
+BTN vs UTG+1 · 4-Bet All-In SB vs UTG+1 · 4-Bet All-In
+POKERCOACHING.COM 59
+
+--- PAGE 60 ---
+30BB VS 4-BET
+BB vs UTG+1 · 4-Bet All-In HJ vs LJ · 4-Bet All-In
+CO vs LJ · 4-Bet All-In BTN vs LJ · 4-Bet All-In
+SB vs LJ · 4-Bet All-In BB vs LJ · 4-Bet All-In
+POKERCOACHING.COM 60
+
+--- PAGE 61 ---
+30BB VS 4-BET
+CO vs HJ · 4-Bet All-In BTN vs HJ · 4-Bet All-In
+SB vs HJ · 4-Bet All-In BB vs HJ · 4-Bet All-In
+BTN vs CO · 4-Bet All-In SB vs CO · 4-Bet All-In
+POKERCOACHING.COM 61
+
+--- PAGE 62 ---
+30BB VS 4-BET
+BB vs CO · 4-Bet All-In SB vs BTN · 4-Bet All-In
+BB vs BTN · 4-Bet All-In BB vs SB · 4-Bet All-In
+POKERCOACHING.COM 62
+
+--- PAGE 63 ---
+20BB VS RFI
+UTG+1 vs UTG · RFI LJ vs UTG · RFI
+HJ vs UTG · RFI CO vs UTG · RFI
+BTN vs UTG · RFI SB vs UTG · RFI
+POKERCOACHING.COM 63
+
+--- PAGE 64 ---
+20BB VS RFI
+BB vs UTG · RFI LJ vs UTG+1 · RFI
+HJ vs UTG+1 · RFI CO vs UTG+1 · RFI
+BTN vs UTG+1 · RFI SB vs UTG+1 · RFI
+POKERCOACHING.COM 64
+
+--- PAGE 65 ---
+20BB VS RFI
+BB vs UTG+1 · RFI HJ vs LJ · RFI
+CO vs LJ · RFI BTN vs LJ · RFI
+SB vs LJ · RFI BB vs LJ · RFI
+POKERCOACHING.COM 65
+
+--- PAGE 66 ---
+20BB VS RFI
+CO vs HJ · RFI BTN vs HJ · RFI
+SB vs HJ · RFI BB vs HJ · RFI
+BTN vs CO · RFI SB vs CO · RFI
+POKERCOACHING.COM 66
+
+--- PAGE 67 ---
+20BB VS RFI
+BB vs CO · RFI SB vs BTN · RFI
+SB vs BTN · All-In BB vs BTN · RFI
+BB vs BTN · All-In BB vs SB · RFI
+POKERCOACHING.COM 67
+
+--- PAGE 68 ---
+20BB VS RFI
+BB vs SB · Limp BB vs SB · All-In
+POKERCOACHING.COM 68
+
+--- PAGE 69 ---
+20BB VS 3-BET
+UTG vs UTG+1 · 3-Bet UTG vs UTG+1 · 3-Bet All-In
+UTG vs LJ · 3-Bet UTG vs LJ · 3-Bet All-In
+UTG vs HJ · 3-Bet UTG vs HJ · 3-Bet All-In
+POKERCOACHING.COM 69
+
+--- PAGE 70 ---
+20BB VS 3-BET
+UTG vs CO · 3-Bet UTG vs CO · 3-Bet All-In
+UTG vs BTN · 3-Bet UTG vs BTN · 3-Bet All-In
+UTG vs SB · 3-Bet UTG vs SB · 3-Bet All-In
+POKERCOACHING.COM 70
+
+--- PAGE 71 ---
+20BB VS 3-BET
+UTG vs BB · 3-Bet UTG vs BB · 3-Bet All-In
+UTG+1 vs LJ · 3-Bet UTG+1 vs LJ · 3-Bet All-In
+UTG+1 vs HJ · 3-Bet UTG+1 vs HJ · 3-Bet All-In
+POKERCOACHING.COM 71
+
+--- PAGE 72 ---
+20BB VS 3-BET
+UTG+1 vs CO · 3-Bet UTG+1 vs CO · 3-Bet All-In
+UTG+1 vs BTN · 3-Bet All-In UTG+1 vs SB · 3-Bet
+UTG+1 vs SB · 3-Bet All-In UTG+1 vs BB · 3-Bet
+POKERCOACHING.COM 72
+
+--- PAGE 73 ---
+20BB VS 3-BET
+UTG+1 vs BB · 3-Bet All-In LJ vs HJ · 3-Bet
+LJ vs HJ · 3-Bet All-In LJ vs CO · 3-Bet All-In
+LJ vs BTN · 3-Bet All-In LJ vs SB · 3-Bet
+POKERCOACHING.COM 73
+
+--- PAGE 74 ---
+20BB VS 3-BET
+LJ vs SB · 3-Bet All-In LJ vs BB · 3-Bet
+LJ vs BB · 3-Bet All-In HJ vs CO · 3-Bet All-In
+HJ vs BTN · 3-Bet All-In HJ vs SB · 3-Bet
+POKERCOACHING.COM 74
+
+--- PAGE 75 ---
+20BB VS 3-BET
+HJ vs SB · 3-Bet All-In HJ vs BB · 3-Bet
+HJ vs BB · 3-Bet All-In CO vs BTN · 3-Bet All-In
+CO vs SB · 3-Bet All-In CO vs BB · 3-Bet
+POKERCOACHING.COM 75
+
+--- PAGE 76 ---
+20BB VS 3-BET
+CO vs BB · 3-Bet All-In BTN vs SB · 3-Bet
+BTN vs SB · 3-Bet All-In BTN vs BB · 3-Bet
+BTN vs BB · 3-Bet All-In SB vs BB · 3-Bet All-In
+POKERCOACHING.COM 76
+
+--- PAGE 77 ---
+20BB VS 4-BET
+UTG+1 vs UTG · 4-Bet All-In LJ vs UTG · 4-Bet All-In
+HJ vs UTG · 4-Bet All-In CO vs UTG · 4-Bet All-In
+BTN vs UTG · 4-Bet All-In SB vs UTG · 4-Bet All-In
+POKERCOACHING.COM 77
+
+--- PAGE 78 ---
+20BB VS 4-BET
+BB vs UTG · 4-Bet All-In LJ vs UTG+1 · 4-Bet All-In
+HJ vs UTG+1 · 4-Bet All-In CO vs UTG+1 · 4-Bet All-In
+SB vs UTG+1 · 4-Bet All-In BB vs UTG+1 · 4-Bet All-In
+POKERCOACHING.COM 78
+
+--- PAGE 79 ---
+20BB VS 4-BET
+HJ vs LJ · 4-Bet All-In SB vs LJ · 4-Bet All-In
+BB vs LJ · 4-Bet All-In SB vs HJ · 4-Bet All-In
+BB vs HJ · 4-Bet All-In BB vs CO · 4-Bet All-In
+POKERCOACHING.COM 79
+
+--- PAGE 80 ---
+20BB VS 4-BET
+SB vs BTN · 4-Bet All-In BB vs BTN · 4-Bet All-In
+POKERCOACHING.COM 80
+
+--- PAGE 81 ---
+12BB VS RFI
+UTG+1 vs UTG · RFI UTG+1 vs UTG · All-In
+LJ vs UTG · RFI LJ vs UTG · All-In
+HJ vs UTG · RFI HJ vs UTG · All-In
+POKERCOACHING.COM 81
+
+--- PAGE 82 ---
+12BB VS RFI
+CO vs UTG · RFI CO vs UTG · All-In
+BTN vs UTG · RFI BTN vs UTG · All-In
+SB vs UTG · RFI SB vs UTG · All-In
+POKERCOACHING.COM 82
+
+--- PAGE 83 ---
+12BB VS RFI
+BB vs UTG · RFI BB vs UTG · All-In
+LJ vs UTG+1 · RFI LJ vs UTG+1 · All-In
+HJ vs UTG+1 · RFI HJ vs UTG+1 · All-In
+POKERCOACHING.COM 83
+
+--- PAGE 84 ---
+12BB VS RFI
+CO vs UTG+1 · RFI CO vs UTG+1 · All-In
+BTN vs UTG+1 · RFI BTN vs UTG+1 · All-In
+SB vs UTG+1 · RFI SB vs UTG+1 · All-In
+POKERCOACHING.COM 84
+
+--- PAGE 85 ---
+12BB VS RFI
+BB vs UTG+1 · RFI BB vs UTG+1 · All-In
+HJ vs LJ · RFI HJ vs LJ · All-In
+CO vs LJ · RFI CO vs LJ · All-In
+POKERCOACHING.COM 85
+
+--- PAGE 86 ---
+12BB VS RFI
+BTN vs LJ · RFI BTN vs LJ · All-In
+SB vs LJ · RFI SB vs LJ · All-In
+BB vs LJ · RFI BB vs LJ · All-In
+POKERCOACHING.COM 86
+
+--- PAGE 87 ---
+12BB VS RFI
+CO vs HJ · RFI CO vs HJ · All-In
+BTN vs HJ · RFI BTN vs HJ · All-In
+SB vs HJ · RFI SB vs HJ · All-In
+POKERCOACHING.COM 87
+
+--- PAGE 88 ---
+12BB VS RFI
+BB vs HJ · RFI BB vs HJ · All-In
+BTN vs CO · RFI BTN vs CO · All-In
+SB vs CO · RFI SB vs CO · All-In
+POKERCOACHING.COM 88
+
+--- PAGE 89 ---
+12BB VS RFI
+BB vs CO · RFI BB vs CO · All-In
+SB vs BTN · RFI SB vs BTN · All-In
+BB vs BTN · RFI BB vs BTN · All-In
+POKERCOACHING.COM 89
+
+--- PAGE 90 ---
+12BB VS RFI
+BB vs SB · Limp BB vs SB · All-In
+POKERCOACHING.COM 90
+
+--- PAGE 91 ---
+12BB VS 3-BET
+UTG vs UTG+1 · 3-Bet All-In UTG vs LJ · 3-Bet All-In
+UTG vs HJ · 3-Bet All-In UTG vs CO · 3-Bet All-In
+UTG vs BTN · 3-Bet All-In UTG vs SB · 3-Bet All-In
+POKERCOACHING.COM 91
+
+--- PAGE 92 ---
+12BB VS 3-BET
+UTG vs BB · 3-Bet All-In UTG+1 vs LJ · 3-Bet All-In
+UTG+1 vs HJ · 3-Bet All-In UTG+1 vs CO · 3-Bet All-In
+UTG+1 vs BTN · 3-Bet All-In UTG+1 vs SB · 3-Bet All-In
+POKERCOACHING.COM 92
+
+--- PAGE 93 ---
+12BB VS 3-BET
+UTG+1 vs BB · 3-Bet All-In LJ vs HJ · 3-Bet All-In
+LJ vs CO · 3-Bet All-In LJ vs BTN · 3-Bet All-In
+LJ vs SB · 3-Bet All-In LJ vs BB · 3-Bet All-In
+POKERCOACHING.COM 93
+
+--- PAGE 94 ---
+12BB VS 3-BET
+HJ vs CO · 3-Bet All-In HJ vs BTN · 3-Bet All-In
+HJ vs SB · 3-Bet All-In HJ vs BB · 3-Bet All-In
+CO vs BTN · 3-Bet All-In CO vs SB · 3-Bet All-In
+POKERCOACHING.COM 94
+
+--- PAGE 95 ---
+12BB VS 3-BET
+CO vs BB · 3-Bet All-In BTN vs SB · 3-Bet All-In
+BTN vs BB · 3-Bet All-In
+POKERCOACHING.COM 95
+
+--- PAGE 96 ---
+YOU'VE GOT THE CHARTS
+NOW BUILD THE
+INSTINCTS
+Charts give you the mathematically correct baseline. In my experience coaching
+thousands of students, the players who improve fastest are the ones who first
+understand why a hand is in a range, then layer their own reads on top. PeakGTO
+backs this guide with free Preflop Charts, a Trainer, and Drills that turn this reference
+into real-table instinct.
+Tournament Preflop Strategy
+▶ Jonathan Little walks through how to read these WATCH NOW
+ranges, when to deviate, and the most common
+preflop spots from UTG through the BB.
+Free Preflop Charts, Trainer &
+Drills
+PEAKGTO.COM
+Master tournament preflop play with PeakGTO's
+free interactive trainers and drills tailored to every
+stack depth.
+POKERCOACHING.COM

@@ -884,6 +884,18 @@ fn get_api_base_url() -> String {
     format!("http://127.0.0.1:{}", api_port())
 }
 
+/// Fallback for the global hotkey (Ctrl+Shift+H), which can fail to fire if
+/// the OS/global-shortcut plugin doesn't have a hook registered (e.g. focus
+/// stolen by the poker client). Callable from a plain button in the always-
+/// interactive main window, so it works even when the hotkey doesn't.
+#[tauri::command]
+fn toggle_hud_layout_mode(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    app_handle
+        .emit_to("live-hud", "hud-toggle-layout", ())
+        .map_err(|err| err.to_string())
+}
+
 #[tauri::command]
 fn sidecar_status(state: State<BackendProcess>) -> SidecarStatus {
     let port = api_port();
@@ -1011,6 +1023,34 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // Global hotkey to toggle HUD layout mode (drag-to-reposition seat
+            // badges). Must be a system-wide shortcut, not a click handler on
+            // the overlay itself: the overlay is click-through until layout
+            // mode is already on, so a button inside it can never be the way
+            // to turn layout mode on in the first place.
+            use tauri::Emitter;
+            use tauri_plugin_global_shortcut::{
+                Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+            };
+
+            let toggle_layout_shortcut =
+                Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyH);
+            let handle = app.handle().clone();
+            app.handle().plugin(
+                tauri_plugin_global_shortcut::Builder::new()
+                    .with_handler(move |_app, shortcut, event| {
+                        if shortcut == &toggle_layout_shortcut
+                            && event.state() == ShortcutState::Pressed
+                        {
+                            let _ = handle.emit_to("live-hud", "hud-toggle-layout", ());
+                        }
+                    })
+                    .build(),
+            )?;
+            app.global_shortcut().register(toggle_layout_shortcut)?;
+            Ok(())
+        })
         .manage(hud::HudController::new())
         .manage(backend)
         .invoke_handler(tauri::generate_handler![
@@ -1025,6 +1065,7 @@ pub fn run() {
             hud::hud_stop,
             hud::hud_is_running,
             hud::hud_diagnose,
+            toggle_hud_layout_mode,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

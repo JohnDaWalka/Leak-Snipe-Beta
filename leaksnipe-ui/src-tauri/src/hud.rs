@@ -105,13 +105,24 @@ fn position_overlay(app: &AppHandle, bounds: &TableBounds) {
     let Some(win) = app.get_webview_window("live-hud") else {
         return;
     };
+    // `bounds` comes straight from a raw Win32 GetWindowRect call (physical
+    // pixels), so it must be applied as Physical, not Logical. Converting to
+    // Logical using the *target* monitor's scale factor and then calling
+    // set_position/set_size is wrong on a mixed-DPI multi-monitor setup:
+    // Tauri resolves that Logical value back to physical using the window's
+    // *current* monitor (wherever it was before this move), not the target
+    // one, producing a cross-monitor scale mismatch and a badly offset overlay.
     let _ = win.set_position(tauri::PhysicalPosition::new(bounds.x, bounds.y));
     let _ = win.set_size(tauri::PhysicalSize::new(bounds.width, bounds.height));
     let _ = win.show();
 }
 
 #[cfg(windows)]
-fn title_looks_like_poker_table(title: &str) -> bool {
+fn window_looks_like_poker_table(hwnd: windows::Win32::Foundation::HWND, title: &str) -> bool {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+
     let tl = title.to_lowercase();
 
     const LOBBY_PATTERNS: &[&str] = &["acr poker lobby", "winning poker lobby", "coinpoker lobby"];
@@ -119,6 +130,33 @@ fn title_looks_like_poker_table(title: &str) -> bool {
         return false;
     }
 
+    // Check window class name
+    let mut class_buf = vec![0u16; 256];
+    let class_len = unsafe { GetClassNameW(hwnd, &mut class_buf) };
+    let class_name = if class_len > 0 {
+        class_buf.truncate(class_len as usize);
+        OsString::from_wide(&class_buf).to_string_lossy().to_string().to_lowercase()
+    } else {
+        "".to_string()
+    };
+
+    if class_name == "unitywndclass" {
+        // CoinPoker's Unity client never puts a per-table name in the OS window
+        // title — it's the static string "CoinPoker" whether you're at the lobby
+        // or seated at a table (confirmed by live capture), so title text alone
+        // can't tell them apart. Reject only the rarer explicit-lobby titles,
+        // accept obvious table-ish titles, and otherwise fall back to asking the
+        // sidecar whether a CoinPoker hand is currently active.
+        if tl == "coinpoker lobby" || tl == "lobby" {
+            return false;
+        }
+        if tl.contains("table") || tl.contains("₮") || tl.contains("chp") || tl.contains("gtd") || tl.contains("nl") || tl.contains("pl") || tl.contains("limit") || tl.contains("#") {
+            return true;
+        }
+        return coinpoker_table_active();
+    }
+
+    // Standard ACR matching
     const KEYWORDS: &[&str] = &[
         "hold'em",
         "holdem",
@@ -128,7 +166,6 @@ fn title_looks_like_poker_table(title: &str) -> bool {
         "americas cardroom",
         "winning poker",
         "betacr",
-        "coinpoker",
         "no limit",
         "pot limit",
         "fixed limit",
@@ -138,6 +175,61 @@ fn title_looks_like_poker_table(title: &str) -> bool {
     }
 
     tl.contains("table") && (tl.contains("ante") || tl.contains("limit") || tl.contains("tournament"))
+}
+
+/// Asks the local Python sidecar whether a CoinPoker hand is currently active.
+/// Used as the last-resort signal for CoinPoker's Unity window, whose OS title
+/// never carries per-table text. Short timeouts so a slow/down sidecar can't
+/// stall the window-detection poll loop; fails closed (false) on any error.
+#[cfg(windows)]
+fn coinpoker_table_active() -> bool {
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::time::Instant;
+
+    let port: u16 = std::env::var("LEAKSNIPE_API_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8765);
+    let addr: SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], port)));
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else {
+        return false;
+    };
+    let req = "GET /api/live/current-hand?site=CoinPoker HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    if stream.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(800);
+    let mut body = Vec::with_capacity(512);
+    let mut buf = [0u8; 512];
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let _ = stream.set_read_timeout(Some(remaining));
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                body.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&body);
+                if text.contains("\"hand_id\":\"") {
+                    return true;
+                }
+                if text.contains("\"hand_id\":null") {
+                    return false;
+                }
+                if body.len() >= 4096 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    false
 }
 
 #[cfg(windows)]
@@ -173,7 +265,7 @@ fn collect_table_windows() -> Vec<TableBounds> {
         buf.truncate(read as usize);
         let title = OsString::from_wide(&buf).to_string_lossy().to_string();
 
-        if !title_looks_like_poker_table(&title) {
+        if !window_looks_like_poker_table(hwnd, &title) {
             return BOOL(1);
         }
 

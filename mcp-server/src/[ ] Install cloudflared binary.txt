@@ -1,0 +1,14 @@
+[ ] Install cloudflared binary
+[ ] Add cloudflared to PATH
+[ ] Run `cloudflared tunnel login`
+[ ] Create tunnel: `cloudflared tunnel create leaksnipe-tunnel`
+[ ] Write C:\Users\Giuli\.cloudflared\leaksnipe-tunnel.yml (replace <TUNNEL_ID>)
+[ ] Reserve DNS: `cloudflared tunnel route dns leaksnipe-tunnel mcp.leaksnipe.win`
+[ ] (Optional) Install as Windows service:
+        cloudflared service install leaksnipe-tunnel --config "<path>"
+[ ] Start tunnel (service or manual):
+        cloudflared tunnel run leaksnipe-tunnel --config "<path>"
+[ ] Verify endpoint with curl or browser
+[ ] Add /mcp/… handlers to your Go server (example code above)
+[ ] (Optional) Add API‑key auth middleware
+[ ] Build & run Go binary (`go build`, then `.\poker-daemon.exe`)

@@ -30,7 +30,7 @@ from models import HandDatabase
 from parsers import HandParser
 
 from paths import resolve_db_path
-from serializers import hand_to_summary, hands_to_summaries
+from serializers import hand_to_summary, hands_to_summaries, hand_to_detail
 
 API_PORT = int(os.environ.get("LEAKSNIPE_API_PORT", "8765"))
 API_HOST = os.environ.get("LEAKSNIPE_API_HOST", "127.0.0.1")
@@ -129,13 +129,7 @@ def get_hand(hand_id: str) -> Dict[str, Any]:
     settings = load_settings()
     for hand in _get_db().get_all_hands():
         if hand.hand_id == hand_id:
-            payload = hand_to_summary(hand, settings)
-            payload["board_cards"] = hand.board_cards
-            payload["streets"] = hand.streets
-            payload["players"] = hand.players
-            payload["winners"] = hand.winners
-            payload["raw_text"] = hand.raw_text
-            return payload
+            return hand_to_detail(hand, settings)
     raise HTTPException(status_code=404, detail="Hand not found")
 
 

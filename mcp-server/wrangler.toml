@@ -1,0 +1,27 @@
+name = "leaksnipe-proxy"
+main = "src/mcp-worker.js"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+# routes = [
+#   { pattern = "leaksnipe.win/*", zone_name = "leaksnipe.win" }
+# ]
+
+[[r2_buckets]]
+binding = "HAND_HISTORY_R2"
+bucket_name = "leaksnipe-hand-histories"
+
+[[r2_buckets]]
+binding = "R2_POKER_HH"
+bucket_name = "poker-hand-histories"
+
+[[r2_buckets]]
+binding = "R2_POKER_HANDS"
+bucket_name = "poker-hands"
+
+[[kv_namespaces]]
+binding = "HAND_HISTORY_KV"
+id = "c13121512b8e4519ae9b3a3a52daeed1"
+
+# DB_PROXY_KEY and BACKFILL_ADMIN_KEY moved to Worker secrets (wrangler secret
+# put) — [vars] is plaintext config, not for credentials.

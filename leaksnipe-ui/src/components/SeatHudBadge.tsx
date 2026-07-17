@@ -5,11 +5,12 @@ import { formatStat, statTone, typeClass } from "../lib/hudStats";
 type SeatHudBadgeProps = {
   stats: PlayerHudStats | null;
   name: string;
+  seat?: number;
   layoutMode?: boolean;
   onDragEnd?: (dx: number, dy: number) => void;
 };
 
-export function SeatHudBadge({ stats, name, layoutMode }: SeatHudBadgeProps) {
+export function SeatHudBadge({ stats, name, seat, layoutMode }: SeatHudBadgeProps) {
   const [showTooltip, setShowTooltip] = useState(false);
   const playerType = stats?.effective_type || stats?.auto_type || "Unknown";
 
@@ -28,6 +29,7 @@ export function SeatHudBadge({ stats, name, layoutMode }: SeatHudBadgeProps) {
       onMouseLeave={() => setShowTooltip(false)}
     >
       <div className="hud-badge-name" title={name}>
+        {seat != null ? <span className="hud-badge-seat">#{seat}</span> : null}
         {name}
       </div>
       <div className="hud-badge-card">

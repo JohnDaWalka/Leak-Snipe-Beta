@@ -106,7 +106,13 @@ type SeatMapEntry = { name?: string; is_hero?: boolean };
 
 
 
-/** Map hand-history seat numbers to layout slots with hero anchored at slot 1 (bottom). */
+/**
+ * Map hand-history seat numbers to layout slots with hero anchored at slot 1
+ * (bottom). Rotation is computed from real seat-number distance around the
+ * table, not from index position within the (often gappy) list of currently
+ * occupied seats — empty seats between two players must not compress their
+ * visual spacing, or badges land on the wrong physical positions.
+ */
 
 export function buildHeroAnchoredSeatSlots(
 
@@ -142,9 +148,7 @@ export function buildHeroAnchoredSeatSlots(
 
     seatsSorted.find((seat) => seatMap[String(seat)]?.is_hero) ?? seatsSorted[0];
 
-  const heroIdx = seatsSorted.indexOf(heroSeat);
-
-  const slotCount = Math.min(seatsSorted.length, layoutSlots.length);
+  const ringSize = layoutSlots.length;
 
 
 
@@ -152,7 +156,10 @@ export function buildHeroAnchoredSeatSlots(
 
   for (const seat of seatsSorted) {
 
-    const offset = (seatsSorted.indexOf(seat) - heroIdx + slotCount) % slotCount;
+    // seat - heroSeat, matching poker_gui.py's original build_hero_anchored_seat_slots
+    // (verified against its actual formula, not guessed): on a fully-occupied
+    // table its index-rank-based offset reduces to exactly this direction.
+    const offset = ((seat - heroSeat) % ringSize + ringSize) % ringSize;
 
     result[seat] = layoutSlots[offset];
 

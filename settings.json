@@ -38,10 +38,10 @@
   "theme": "Slate Blue",
   "advanced_mode": false,
   "live_hud_enabled": true,
+  "live_hud_backend": "tauri",
   "hud_opacity": 0.6,
   "hud_seat_layout": "auto",
   "hud_density": "compact",
-  "hud_site_preset": "auto",
   "hud_anchor": "top-left",
   "hud_offset_x": 0,
   "hud_offset_y": 0,
@@ -57,39 +57,38 @@
       "offset_x": 36,
       "offset_y": 65,
       "badge_offsets": {
-        "3": {
-          "fx": 0.1619,
-          "fy": 0.4057
-        },
-        "8": {
-          "fx": 0.7293,
-          "fy": 0.6276
-        },
         "2": {
           "fx": 0.2758,
           "fy": 0.6245
         },
-        "6": {
-          "fx": 0.7874,
-          "fy": 0.1788
+        "3": {
+          "fx": 0.1619,
+          "fy": 0.4057
         },
         "4": {
           "fx": 0.213,
           "fy": 0.1233
         },
+        "5": {
+          "fx": 0.4985,
+          "fy": 0.0617
+        },
+        "6": {
+          "fx": 0.7874,
+          "fy": 0.1788
+        },
         "7": {
           "fx": 0.8393,
           "fy": 0.442
         },
-        "5": {
-          "fx": 0.4985,
-          "fy": 0.0617
+        "8": {
+          "fx": 0.7293,
+          "fy": 0.6276
         }
       }
     }
   },
-  "live_hud_backend": "python",
-  "ai_provider": "asi1",
+  "ai_provider": "anthropic",
   "ollama_model": "qwen2.5:7b",
   "ai_include_dataset_context": true,
   "ai_web_search_mode": "on_demand",
@@ -98,7 +97,30 @@
   "ai_agentic_tools": true,
   "asi1_model": "asi1",
   "coach_memory_hero": "JohnDaWalka",
+  "hud_site_preset": "auto",
   "db_path": "poker_hands.db",
   "dh2_auto_sync": false,
-  "dh2_sync_interval": 5
+  "dh2_sync_interval": 5,
+  "hud_seat_offsets": {
+    "6:4": {
+      "x": 0.30287526427061306,
+      "y": 0.245
+    },
+    "6:3": {
+      "x": 0.1048766737138831,
+      "y": 0.3566666666666667
+    },
+    "6:6": {
+      "x": 0.9056941508104298,
+      "y": 0.7798148148148148
+    },
+    "6:5": {
+      "x": 0.6640028188865399,
+      "y": 0.2662962962962963
+    },
+    "6:2": {
+      "x": 0.11095137420718815,
+      "y": 0.8307407407407408
+    }
+  }
 }

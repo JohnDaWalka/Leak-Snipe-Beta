@@ -3071,6 +3071,15 @@ def _is_acr_table_window(title: str, hwnd=None) -> bool:
     if not title or _hud_title_blacklisted(title):
         return False
     tl = title.lower()
+    if hwnd is not None and HAS_WIN32:
+        try:
+            class_name = win32gui.GetClassName(hwnd).lower()
+            if class_name == "unitywndclass":
+                if tl == "coinpoker" or tl == "coinpoker lobby" or tl == "lobby":
+                    return False
+                return any(char in tl for char in ("table", "₮", "chp", "gtd", "nl", "pl", "#")) or "limit" in tl
+        except Exception:
+            pass
     if any(lp in tl for lp in _ACR_LOBBY_PATTERNS):
         return False
     if "lobby" in tl and not any(g in tl for g in _ACR_GAME_HINTS):

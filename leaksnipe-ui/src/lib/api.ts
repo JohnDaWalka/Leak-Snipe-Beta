@@ -128,7 +128,7 @@ export type Dashboard = {
   wtsd: number;
   wsd: number;
   cbet: number;
-  by_position: Record<string, { total: number; vpip: number; pfr: number }>;
+  by_position: Record<string, { total: number; vpip: number; pfr: number; net?: number; won?: number; lost?: number; chip_net?: number }>;
   hands_by_site: Record<string, number>;
   by_site_stats: Record<
     string,
@@ -312,6 +312,7 @@ export type Settings = {
   hud_density?: string;
   hud_edge_margin_pct?: number;
   hud_badge_scale?: number;
+  hud_seat_offsets?: Record<string, { x: number; y: number }>;
   [key: string]: unknown;
 };
 
@@ -1097,8 +1098,11 @@ export const api = {
     const q = encodeURIComponent(names.join(","));
     return apiFetch<PlayerStatsBatchResponse>(`/api/players/stats?names=${q}`);
   },
-  liveCurrentHand: (site?: string) => {
-    const q = site ? `?site=${encodeURIComponent(site)}` : "";
+  liveCurrentHand: (site?: string, table?: string) => {
+    const params = new URLSearchParams();
+    if (site) params.set("site", site);
+    if (table) params.set("table", table);
+    const q = params.toString() ? `?${params.toString()}` : "";
     return apiFetch<LiveCurrentHand>(`/api/live/current-hand${q}`);
   },
   refreshPlayerTypes: () =>

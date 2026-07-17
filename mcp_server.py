@@ -90,6 +90,117 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
         "raw_text": hand.raw_text
     }
 
+def build_cards_sql(cards: str) -> tuple[str, list]:
+    c = cards.strip().lower()
+    if not c or len(c) < 2:
+        return "", []
+    c1, c2 = c[0].upper(), c[1].upper()
+    if c1 == c2:
+        return "hero_cards LIKE ?", [f"{c1}% {c2}%"]
+    p1 = f"{c1}% {c2}%"
+    p2 = f"{c2}% {c1}%"
+    if len(c) >= 3 and c[2] == 's':
+        return "( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) = SUBSTR(hero_cards, 5, 1) )", [p1, p2]
+    elif len(c) >= 3 and c[2] == 'o':
+        return "( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) != SUBSTR(hero_cards, 5, 1) )", [p1, p2]
+    else:
+        return "(hero_cards LIKE ? OR hero_cards LIKE ?)", [p1, p2]
+
+def parse_natural_language_query(query: str) -> tuple[str, list, int]:
+    import re
+    query_lower = query.lower()
+    where_clauses = []
+    params = []
+    
+    pos_map = {
+        "utg": "UTG", "mp": "MP", "hj": "HJ", "co": "CO", "cutoff": "CO",
+        "btn": "BTN", "button": "BTN", "sb": "SB", "small blind": "SB",
+        "bb": "BB", "big blind": "BB"
+    }
+    for key, val in pos_map.items():
+        if f"from {key}" in query_lower or f"at {key}" in query_lower or f"in {key}" in query_lower or (f" {key} " in f" {query_lower} "):
+            where_clauses.append("hero_position = ?")
+            params.append(val)
+            break
+            
+    if "won" in query_lower or "winning" in query_lower or "profit" in query_lower:
+        where_clauses.append("hero_won > 0")
+    elif "lost" in query_lower or "losing" in query_lower or "loss" in query_lower:
+        where_clauses.append("hero_won < 0")
+        
+    if "3-bet" in query_lower or "3bet" in query_lower:
+        where_clauses.append("(raw_text LIKE '%3-bet%' OR raw_text LIKE '%3bet%')")
+    elif "4-bet" in query_lower or "4bet" in query_lower:
+        where_clauses.append("(raw_text LIKE '%4-bet%' OR raw_text LIKE '%4bet%')")
+    elif "all-in" in query_lower or "allin" in query_lower or "all in" in query_lower:
+        where_clauses.append("(raw_text LIKE '%all-in%' OR raw_text LIKE '%all in%')")
+
+    card_pattern = re.compile(r'\b([2-9tjqka]{2})([so]?)\b', re.IGNORECASE)
+    card_match = card_pattern.search(query_lower)
+    if card_match:
+        cards_input = card_match.group(1).upper()
+        suited_offsuited = card_match.group(2).lower()
+        c1, c2 = cards_input[0], cards_input[1]
+        if c1 == c2:
+            where_clauses.append("hero_cards LIKE ?")
+            params.append(f"{c1}% {c2}%")
+        else:
+            p1 = f"{c1}% {c2}%"
+            p2 = f"{c2}% {c1}%"
+            if suited_offsuited == 's':
+                where_clauses.append("( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) = SUBSTR(hero_cards, 5, 1) )")
+                params.extend([p1, p2])
+            elif suited_offsuited == 'o':
+                where_clauses.append("( (hero_cards LIKE ? OR hero_cards LIKE ?) AND SUBSTR(hero_cards, 2, 1) != SUBSTR(hero_cards, 5, 1) )")
+                params.extend([p1, p2])
+            else:
+                where_clauses.append("(hero_cards LIKE ? OR hero_cards LIKE ?)")
+                params.extend([p1, p2])
+
+    if "coinpoker" in query_lower or "coin poker" in query_lower:
+        where_clauses.append("site = ?")
+        params.append("CoinPoker")
+    elif "acr" in query_lower or "wpn" in query_lower or "americas" in query_lower:
+        where_clauses.append("site = ?")
+        params.append("BetACR")
+
+    limit = 10
+    limit_match = re.search(r'\blimit\s+(\d+)\b', query_lower)
+    if not limit_match:
+        limit_match = re.search(r'\blast\s+(\d+)\b', query_lower)
+    if limit_match:
+        limit = int(limit_match.group(1))
+
+    if not where_clauses:
+        where_str = " WHERE (raw_text LIKE ? OR hand_id LIKE ? OR table_name LIKE ?)"
+        params = [f"%{query}%", f"%{query}%", f"%{query}%"]
+    else:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+    return where_str, params, limit
+
+def query_and_serialize_hands(db, settings, sql, params):
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            rows = c.execute(sql, params).fetchall()
+            if not rows:
+                return []
+            hand_ids = [row["hand_id"] for row in rows]
+            players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand = (
+                db._load_related_for_ids(c, hand_ids)
+            )
+            hands = [
+                db._hydrate_hand(
+                    row, players_by_hand, actions_by_hand, winners_by_hand, tags_by_hand
+                )
+                for row in rows
+            ]
+            return [serialize_hand(h, settings) for h in hands]
+        finally:
+            conn.close()
+
 def handle_request(req):
     method = req.get("method")
     params = req.get("params", {})
@@ -141,18 +252,68 @@ def handle_request(req):
                     },
                     {
                         "name": "search_hands",
-                        "description": "Search and list hands matching filters. Returns hand summaries with cards, dates, and profits.",
+                        "description": "Natural language search across hands (e.g. 'my last 3-bet pot from cutoff')",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "site": {"type": "string", "description": "Filter by site"},
-                                "tag": {"type": "string", "description": "Filter by custom tag"},
-                                "user": {"type": "string", "description": "Filter by hero name"},
-                                "start_date": {"type": "string", "description": "ISO start date"},
-                                "end_date": {"type": "string", "description": "ISO end date"},
-                                "limit": {"type": "integer", "description": "Max hands to return (default 20, max 200)"},
-                                "offset": {"type": "integer", "description": "Offset offset for pagination"}
+                                "query": {"type": "string", "description": "Natural language search query like '3-bet from cutoff'"},
+                                "limit": {"type": "integer", "description": "Max hands to return (default 10)"},
+                                "offset": {"type": "integer", "description": "Pagination offset"}
+                            },
+                            "required": ["query"]
+                        }
+                    },
+                    {
+                        "name": "get_recent_hands",
+                        "description": "Returns the most recent hands played by the user",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "limit": {"type": "integer", "description": "Max hands to return (default 10)"},
+                                "since": {"type": "string", "description": "ISO timestamp (YYYY-MM-DD) to get hands after"}
                             }
+                        }
+                    },
+                    {
+                        "name": "get_hands_by_cards",
+                        "description": "Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s')",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "cards": {"type": "string", "description": "Card string like 'QQ', 'AK', '76s'"},
+                                "limit": {"type": "integer", "description": "Max hands to return (default 10)"}
+                            },
+                            "required": ["cards"]
+                        }
+                    },
+                    {
+                        "name": "get_biggest_winning_hands",
+                        "description": "Returns the biggest winning hands by profit",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "limit": {"type": "integer", "description": "Max hands to return (default 10)"}
+                            }
+                        }
+                    },
+                    {
+                        "name": "get_winrate_by_position",
+                        "description": "Returns winrate statistics broken down by position",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                    },
+                    {
+                        "name": "get_hands_by_position",
+                        "description": "Returns hands played from a specific position",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "position": {"type": "string", "enum": ["UTG","MP","HJ","CO","BTN","SB","BB"], "description": "Table position"},
+                                "limit": {"type": "integer", "description": "Max hands to return (default 10)"}
+                            },
+                            "required": ["position"]
                         }
                     },
                     {
@@ -217,24 +378,75 @@ def handle_request(req):
                 return json_rpc_success(req_id, {"totals": res["totals"]})
 
             elif tool_name == "search_hands":
-                limit = min(args.get("limit", 20), 200)
+                query = args.get("query", "")
+                limit = min(args.get("limit", 10), 100)
                 offset = args.get("offset", 0)
-                res = db.search_hands(
-                    site=args.get("site"),
-                    tag=args.get("tag"),
-                    start_date=args.get("start_date"),
-                    end_date=args.get("end_date"),
-                    hero_name=args.get("user"),
-                    limit=limit,
-                    offset=offset
-                )
-                # Map raw hands to summaries
-                from server import hands_to_summaries
-                summaries = hands_to_summaries(res["hands"], settings)
-                return json_rpc_success(req_id, {
-                    "total": res["total"],
-                    "hands": summaries
-                })
+                where_str, sql_params, parsed_limit = parse_natural_language_query(query)
+                if not args.get("limit"):
+                    limit = parsed_limit
+                sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
+                hands = query_and_serialize_hands(db, settings, sql, sql_params + [limit, offset])
+                return json_rpc_success(req_id, {"hands": hands})
+
+            elif tool_name == "get_recent_hands":
+                limit = min(args.get("limit", 10), 100)
+                since = args.get("since")
+                where_clauses = []
+                sql_params = []
+                if since:
+                    where_clauses.append("date >= ?")
+                    sql_params.append(since)
+                where_str = ""
+                if where_clauses:
+                    where_str = " WHERE " + " AND ".join(where_clauses)
+                sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ?"
+                hands = query_and_serialize_hands(db, settings, sql, sql_params + [limit])
+                return json_rpc_success(req_id, {"hands": hands})
+
+            elif tool_name == "get_hands_by_cards":
+                cards = args.get("cards", "")
+                limit = min(args.get("limit", 10), 100)
+                cards_sql, cards_params = build_cards_sql(cards)
+                if not cards_sql:
+                    return json_rpc_error(req_id, -32602, "Invalid cards specified")
+                sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ?"
+                hands = query_and_serialize_hands(db, settings, sql, cards_params + [limit])
+                return json_rpc_success(req_id, {"hands": hands})
+
+            elif tool_name == "get_biggest_winning_hands":
+                limit = min(args.get("limit", 10), 100)
+                sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?"
+                hands = query_and_serialize_hands(db, settings, sql, [limit])
+                return json_rpc_success(req_id, {"hands": hands})
+
+            elif tool_name == "get_winrate_by_position":
+                sql = """
+                    SELECT 
+                        hero_position,
+                        COUNT(*) as hands_played,
+                        SUM(hero_won) as net_profit,
+                        SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
+                    FROM hands
+                    WHERE hero_position IS NOT NULL AND hero_position != '?'
+                    GROUP BY hero_position
+                    ORDER BY net_profit DESC
+                """
+                with db.lock:
+                    conn = db._connect()
+                    try:
+                        conn.row_factory = sqlite3.Row
+                        rows = conn.execute(sql).fetchall()
+                        stats = [dict(r) for r in rows]
+                        return json_rpc_success(req_id, {"winrate_by_position": stats})
+                    finally:
+                        conn.close()
+
+            elif tool_name == "get_hands_by_position":
+                position = args.get("position", "").upper()
+                limit = min(args.get("limit", 10), 100)
+                sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ?"
+                hands = query_and_serialize_hands(db, settings, sql, [position, limit])
+                return json_rpc_success(req_id, {"hands": hands})
 
             elif tool_name == "get_hand_detail":
                 hand_id = args.get("hand_id")

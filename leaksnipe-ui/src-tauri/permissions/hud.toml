@@ -52,3 +52,8 @@ commands.allow = ["restart_sidecar"]
 identifier = "allow-launch-sidecar-window"
 description = "Enables the launch_sidecar_window command"
 commands.allow = ["launch_sidecar_window"]
+
+[[permission]]
+identifier = "allow-toggle-hud-layout-mode"
+description = "Enables the toggle_hud_layout_mode command"
+commands.allow = ["toggle_hud_layout_mode"]

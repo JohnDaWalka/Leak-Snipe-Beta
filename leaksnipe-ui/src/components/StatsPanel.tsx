@@ -152,18 +152,25 @@ export function StatsPanel({ dashboard, loading, warming, error, onRetry }: Stat
                   <th>Hands</th>
                   <th>VPIP</th>
                   <th>PFR</th>
+                  <th>Net</th>
                 </tr>
               </thead>
               <tbody>
                 {POSITION_ORDER.map((pos) => {
                   const d = dashboard.by_position[pos];
                   if (!d) return null;
+                  const net = d.net ?? d.chip_net ?? 0;
+                  const isTournament = d.net == null && d.chip_net != null;
+                  const netLabel = isTournament
+                    ? `${net >= 0 ? "+" : ""}${Math.round(net).toLocaleString()} chips`
+                    : `${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(2)}`;
                   return (
                     <tr key={pos}>
                       <td>{pos}</td>
                       <td>{d.total}</td>
                       <td>{d.vpip}%</td>
                       <td>{d.pfr}%</td>
+                      <td className={net >= 0 ? "positive" : "negative"}>{netLabel}</td>
                     </tr>
                   );
                 })}

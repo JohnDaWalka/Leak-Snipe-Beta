@@ -1366,6 +1366,11 @@ tbody tr {
   z-index: 10;
 }
 
+.live-seat-anchor.draggable {
+  cursor: move;
+  touch-action: none;
+}
+
 .live-seat-badge {
   position: relative;
   min-width: calc(150px * var(--hud-badge-scale, 1.5));
@@ -1374,6 +1379,12 @@ tbody tr {
 
 .live-seat-badge .hud-badge-name {
   font-size: calc(0.72rem * var(--hud-badge-scale, 1.5));
+}
+
+.live-seat-badge .hud-badge-seat {
+  color: #fbbf24;
+  font-weight: 700;
+  margin-right: 0.3em;
 }
 
 .live-seat-badge .hud-badge-card {
