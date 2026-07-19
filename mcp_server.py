@@ -32,7 +32,8 @@ def get_db():
         log_err(f"Failed to connect to database: {e}")
         raise
 
-def serialize_hand(hand: Hand, settings: dict) -> dict:
+def serialize_hand(hand: Hand, settings: dict, *, format: str = "summary", include_raw: bool = False) -> dict:
+    """Default format=summary omits raw_text/streets to save agent context."""
     hero_name = resolve_hand_hero_name(
         settings,
         hand.site,
@@ -41,8 +42,8 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
         hero_player=getattr(hand, "hero_player", ""),
     )
     date_str = hand.date.isoformat() if hand.date else None
-    
-    return {
+    full = format == "full" or include_raw
+    out = {
         "hand_id": hand.hand_id,
         "site": hand.site,
         "date": date_str,
@@ -56,16 +57,18 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
         "hero_won": hand.hero_won,
         "hero_position": hand.hero_position,
         "hero_name": hero_name,
-        "players": [
+    }
+    if full:
+        out["players"] = [
             {
                 "seat": seat,
                 "name": p["name"],
                 "stack": p["stack"],
-                "is_hero": p.get("is_hero", False)
+                "is_hero": p.get("is_hero", False),
             }
             for seat, p in hand.players.items()
-        ],
-        "streets": [
+        ]
+        out["streets"] = [
             {
                 "name": street.get("name", ""),
                 "cards": street.get("cards", []),
@@ -73,22 +76,19 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
                     {
                         "player": act.get("player", ""),
                         "action": act.get("action", ""),
-                        "amount": act.get("amount", 0.0)
+                        "amount": act.get("amount", 0.0),
                     }
                     for act in street.get("actions", [])
-                ]
+                ],
             }
             for street in getattr(hand, "streets", [])
-        ],
-        "winners": [
-            {
-                "name": w["name"],
-                "amount": w["amount"]
-            }
+        ]
+        out["winners"] = [
+            {"name": w["name"], "amount": w["amount"]}
             for w in getattr(hand, "winners", [])
-        ],
-        "raw_text": hand.raw_text
-    }
+        ]
+        out["raw_text"] = hand.raw_text
+    return out
 
 def build_cards_sql(cards: str) -> tuple[str, list]:
     c = cards.strip().lower()
@@ -197,7 +197,8 @@ def query_and_serialize_hands(db, settings, sql, params):
                 )
                 for row in rows
             ]
-            return [serialize_hand(h, settings) for h in hands]
+            fmt = "summary"
+            return [serialize_hand(h, settings, format=fmt) for h in hands]
         finally:
             conn.close()
 
@@ -347,7 +348,7 @@ def handle_request(req):
                 },
                 "serverInfo": {
                     "name": "LeakSnipe MCP Server",
-                    "version": "1.0.0"
+                    "version": "2.0.0"
                 }
             }
         }
@@ -635,13 +636,18 @@ def handle_request(req):
                 hands = query_and_serialize_hands(db, settings, sql, [position, limit])
                 return json_rpc_success(req_id, {"hands": hands})
 
-            elif tool_name == "get_hand_detail":
-                hand_id = args.get("hand_id")
+            elif tool_name == "get_hand_detail" or tool_name == "get_hand":
+                hand_id = args.get("hand_id") or args.get("id")
                 hand = db.get_hand_by_id(hand_id)
                 if not hand:
                     return json_rpc_error(req_id, -32602, f"Hand not found: {hand_id}")
-                detail = serialize_hand(hand, settings)
-                return json_rpc_success(req_id, {"hand": detail})
+                detail = serialize_hand(
+                    hand,
+                    settings,
+                    format=args.get("format", "full"),
+                    include_raw=bool(args.get("include_raw", True)),
+                )
+                return json_rpc_success(req_id, {"success": True, "found": True, "result": detail, "hand": detail})
 
             elif tool_name == "add_tag":
                 hand_id = args.get("hand_id")

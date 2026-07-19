@@ -86,7 +86,16 @@ class SQLiteConnection:
             self.conn.close()
 
 
-def serialize_hand(hand: Hand, settings: dict) -> dict:
+def serialize_hand(
+    hand: Hand,
+    settings: dict,
+    *,
+    format: str = "summary",
+    include_raw: bool = False,
+    include_actions: bool = False,
+    include_players: bool = False,
+) -> dict:
+    """Serialize a hand. Default format=summary omits raw_text / streets to save tokens."""
     hero_name = resolve_hand_hero_name(
         settings,
         hand.site,
@@ -95,8 +104,9 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
         hero_player=getattr(hand, "hero_player", ""),
     )
     date_str = hand.date.isoformat() if hand.date else None
-    
-    return {
+    full = format == "full" or include_raw
+
+    out: Dict[str, Any] = {
         "hand_id": hand.hand_id,
         "site": hand.site,
         "date": date_str,
@@ -110,16 +120,19 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
         "hero_won": hand.hero_won,
         "hero_position": hand.hero_position,
         "hero_name": hero_name,
-        "players": [
+    }
+    if include_players or full:
+        out["players"] = [
             {
                 "seat": seat,
                 "name": p["name"],
                 "stack": p["stack"],
-                "is_hero": p.get("is_hero", False)
+                "is_hero": p.get("is_hero", False),
             }
             for seat, p in hand.players.items()
-        ],
-        "streets": [
+        ]
+    if include_actions or full:
+        out["streets"] = [
             {
                 "name": street.get("name", ""),
                 "cards": street.get("cards", []),
@@ -127,22 +140,20 @@ def serialize_hand(hand: Hand, settings: dict) -> dict:
                     {
                         "player": act.get("player", ""),
                         "action": act.get("action", ""),
-                        "amount": act.get("amount", 0.0)
+                        "amount": act.get("amount", 0.0),
                     }
                     for act in street.get("actions", [])
-                ]
+                ],
             }
             for street in getattr(hand, "streets", [])
-        ],
-        "winners": [
-            {
-                "name": w["name"],
-                "amount": w["amount"]
-            }
+        ]
+        out["winners"] = [
+            {"name": w["name"], "amount": w["amount"]}
             for w in getattr(hand, "winners", [])
-        ],
-        "raw_text": hand.raw_text
-    }
+        ]
+    if include_raw or full:
+        out["raw_text"] = hand.raw_text
+    return out
 
 def _safe_decode(b):
     if not b:
@@ -258,7 +269,17 @@ def parse_natural_language_query(query: str) -> tuple[str, list, int]:
         where_str = " WHERE " + " AND ".join(where_clauses)
     return where_str, params, limit
 
-def query_and_serialize_hands(db, settings, sql, params):
+def query_and_serialize_hands(
+    db,
+    settings,
+    sql,
+    params,
+    *,
+    format: str = "summary",
+    include_raw: bool = False,
+    include_actions: bool = False,
+    include_players: bool = False,
+):
     with db.lock:
         conn = db._connect()
         try:
@@ -277,9 +298,39 @@ def query_and_serialize_hands(db, settings, sql, params):
                 )
                 for row in rows
             ]
-            return [serialize_hand(h, settings) for h in hands]
+            return [
+                serialize_hand(
+                    h,
+                    settings,
+                    format=format,
+                    include_raw=include_raw,
+                    include_actions=include_actions,
+                    include_players=include_players,
+                )
+                for h in hands
+            ]
         finally:
             conn.close()
+
+
+def _ok_list(results, *, limit=None, offset=0, has_more=False, **extra):
+    return {
+        "success": True,
+        "count": len(results) if results is not None else 0,
+        "results": results or [],
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        **extra,
+    }
+
+
+def _clamp_limit(limit: Optional[int], default: int = 10, max_limit: int = 100) -> int:
+    try:
+        n = int(limit) if limit is not None else default
+    except (TypeError, ValueError):
+        n = default
+    return max(1, min(n, max_limit))
 
 
 def _assert_select(query: str) -> str:
@@ -433,95 +484,134 @@ def database_overview(database: Optional[str] = None) -> Dict[str, Any]:
 def get_recent_hands(
     limit: int = 10,
     since: Optional[str] = None,
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Returns the most recent hands played by the user.
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Returns the most recent hands (summary by default — no raw_text).
 
     Args:
-        limit: Max hands to return (default 10).
+        limit: Max hands to return (default 10, max 100).
         since: ISO timestamp YYYY-MM-DD to get hands after.
         database: Optional database name (default: poker_hands).
+        format: 'summary' (default) or 'full'.
+        include_raw: Include raw_text even in summary mode.
+        offset: Pagination offset.
     """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
+    limit = _clamp_limit(limit)
     where_clauses = []
-    sql_params = []
+    sql_params: List[Any] = []
     if since:
         where_clauses.append("date >= ?")
         sql_params.append(since)
-    where_str = ""
-    if where_clauses:
-        where_str = " WHERE " + " AND ".join(where_clauses)
-    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ?"
-    return query_and_serialize_hands(db, settings, sql, sql_params + [limit])
+    where_str = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
+    hands = query_and_serialize_hands(
+        db,
+        settings,
+        sql,
+        sql_params + [limit + 1, offset],
+        format=format,
+        include_raw=include_raw,
+    )
+    has_more = len(hands) > limit
+    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
 
 
 @mcp.tool()
 def get_hands_by_cards(
     cards: str,
     limit: int = 10,
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s').
-
-    Args:
-        cards: Card string like 'QQ', 'AK', '76s'.
-        limit: Max hands to return (default 10).
-        database: Optional database name (default: poker_hands).
-    """
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s'). Summary by default."""
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
+    limit = _clamp_limit(limit)
     cards_sql, cards_params = build_cards_sql(cards)
     if not cards_sql:
         raise ValueError("Invalid cards specified")
-    sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ?"
-    return query_and_serialize_hands(db, settings, sql, cards_params + [limit])
+    sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ? OFFSET ?"
+    hands = query_and_serialize_hands(
+        db, settings, sql, cards_params + [limit + 1, offset],
+        format=format, include_raw=include_raw,
+    )
+    has_more = len(hands) > limit
+    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
 
 
 @mcp.tool()
 def get_biggest_winning_hands(
     limit: int = 10,
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Returns the biggest winning hands by profit.
-
-    Args:
-        limit: Max hands to return (default 10).
-        database: Optional database name (default: poker_hands).
-    """
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Biggest winning hands by profit (chip units). Summary by default."""
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?"
-    return query_and_serialize_hands(db, settings, sql, [limit])
+    limit = _clamp_limit(limit)
+    sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ? OFFSET ?"
+    hands = query_and_serialize_hands(
+        db, settings, sql, [limit + 1, offset], format=format, include_raw=include_raw,
+    )
+    has_more = len(hands) > limit
+    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
 
 
 @mcp.tool()
 def get_winrate_by_position(
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Returns winrate statistics broken down by position.
-
-    Args:
-        database: Optional database name (default: poker_hands).
-    """
+    database: Optional[str] = None,
+    site: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    is_tournament: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Winrate / profit by position. Profit may be tournament chips, not USD."""
     db = HandDatabase(str(_resolve_db(database)))
-    sql = """
-        SELECT 
-            hero_position,
-            COUNT(*) as hands_played,
-            SUM(hero_won) as net_profit,
-            SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
+    where = ["hero_position IS NOT NULL", "hero_position != '?'", "hero_position != ''"]
+    params: List[Any] = []
+    if site:
+        where.append("LOWER(site) = LOWER(?)")
+        params.append(site)
+    if date_from:
+        where.append("date >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("date <= ?")
+        params.append(date_to)
+    if is_tournament is True:
+        where.append("is_tournament = 1")
+    elif is_tournament is False:
+        where.append("is_tournament = 0")
+    sql = f"""
+        SELECT
+            hero_position AS position,
+            COUNT(*) AS total_hands,
+            SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) AS hands_won,
+            SUM(hero_won) AS total_profit
         FROM hands
-        WHERE hero_position IS NOT NULL AND hero_position != '?'
+        WHERE {' AND '.join(where)}
         GROUP BY hero_position
-        ORDER BY net_profit DESC
+        ORDER BY total_profit DESC
     """
     with db.lock:
         conn = db._connect()
         try:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql).fetchall()
-            return [dict(r) for r in rows]
+            rows = conn.execute(sql, params).fetchall()
+            results = [dict(r) for r in rows]
+            return _ok_list(
+                results,
+                note="total_profit is in site/tournament chip units, not always USD.",
+            )
         finally:
             conn.close()
 
@@ -530,19 +620,22 @@ def get_winrate_by_position(
 def get_hands_by_position(
     position: str,
     limit: int = 10,
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Returns hands played from a specific position.
-
-    Args:
-        position: Position like 'UTG', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB'.
-        limit: Max hands to return (default 10).
-        database: Optional database name (default: poker_hands).
-    """
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """Hands from a hero position. Summary by default."""
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ?"
-    return query_and_serialize_hands(db, settings, sql, [position.upper(), limit])
+    limit = _clamp_limit(limit)
+    sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ? OFFSET ?"
+    hands = query_and_serialize_hands(
+        db, settings, sql, [position.upper(), limit + 1, offset],
+        format=format, include_raw=include_raw,
+    )
+    has_more = len(hands) > limit
+    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
 
 
 @mcp.tool()
@@ -550,22 +643,219 @@ def search_hands(
     query: str,
     limit: Optional[int] = None,
     offset: int = 0,
-    database: Optional[str] = None
-) -> List[Dict[str, Any]]:
-    """Natural language search across hands (e.g. 'my last 3-bet pot from cutoff').
-
-    Args:
-        query: Natural language search query.
-        limit: Optional limit to override query limit.
-        offset: Pagination offset.
-        database: Optional database name (default: poker_hands).
-    """
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+) -> Dict[str, Any]:
+    """Natural language search (e.g. 'BTN won QQ'). Summary by default."""
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
     where_str, sql_params, parsed_limit = parse_natural_language_query(query)
-    lim = limit if limit is not None else parsed_limit
+    lim = _clamp_limit(limit if limit is not None else parsed_limit)
     sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
-    return query_and_serialize_hands(db, settings, sql, sql_params + [lim, offset])
+    hands = query_and_serialize_hands(
+        db, settings, sql, sql_params + [lim + 1, offset],
+        format=format, include_raw=include_raw,
+    )
+    has_more = len(hands) > lim
+    return _ok_list(hands[:lim], limit=lim, offset=offset, has_more=has_more)
+
+
+@mcp.tool()
+def get_hand(
+    hand_id: str,
+    database: Optional[str] = None,
+    format: str = "summary",
+    include_raw: bool = False,
+    include_actions: bool = False,
+    include_players: bool = False,
+    include_tags: bool = False,
+) -> Dict[str, Any]:
+    """Get a single hand by id with optional includes."""
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    hands = query_and_serialize_hands(
+        db,
+        settings,
+        "SELECT * FROM hands WHERE hand_id = ? LIMIT 1",
+        [hand_id],
+        format=format,
+        include_raw=include_raw,
+        include_actions=include_actions,
+        include_players=include_players,
+    )
+    if not hands:
+        return {"success": True, "found": False, "result": None}
+    result = hands[0]
+    if include_tags:
+        with db.lock:
+            conn = db._connect()
+            try:
+                tags = conn.execute(
+                    "SELECT tag FROM hand_tags WHERE hand_id = ? ORDER BY tag",
+                    [hand_id],
+                ).fetchall()
+                result["tags"] = [t[0] if not isinstance(t, sqlite3.Row) else t["tag"] for t in tags]
+            finally:
+                conn.close()
+    return {"success": True, "found": True, "result": result}
+
+
+@mcp.tool()
+def list_tags(
+    database: Optional[str] = None,
+    limit: int = 100,
+    prefix: Optional[str] = None,
+) -> Dict[str, Any]:
+    """List distinct hand tags with counts."""
+    db_path = _resolve_db(database)
+    limit = _clamp_limit(limit, 100)
+    with SQLiteConnection(db_path) as conn:
+        params: List[Any] = []
+        sql = "SELECT tag, COUNT(*) AS hand_count FROM hand_tags"
+        if prefix:
+            sql += " WHERE LOWER(tag) LIKE ?"
+            params.append(prefix.lower() + "%")
+        sql += " GROUP BY tag ORDER BY hand_count DESC LIMIT ?"
+        params.append(limit)
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except sqlite3.Error:
+            return _ok_list([])
+        return _ok_list([dict(r) for r in rows], limit=limit)
+
+
+@mcp.tool()
+def list_leaks(
+    database: Optional[str] = None,
+    min_mistakes: int = 1,
+    limit: int = 20,
+    offset: int = 0,
+    include_raw_response: bool = False,
+) -> Dict[str, Any]:
+    """Search ai_analysis rows for coaching leaks."""
+    db_path = _resolve_db(database)
+    limit = _clamp_limit(limit, 20)
+    cols = (
+        "*"
+        if include_raw_response
+        else "hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at"
+    )
+    with SQLiteConnection(db_path) as conn:
+        try:
+            rows = conn.execute(
+                f"SELECT {cols} FROM ai_analysis WHERE mistakes_found >= ? "
+                "ORDER BY analyzed_at DESC LIMIT ? OFFSET ?",
+                [min_mistakes, limit + 1, offset],
+            ).fetchall()
+        except sqlite3.Error:
+            return _ok_list([])
+        results = [dict(r) for r in rows]
+        has_more = len(results) > limit
+        return _ok_list(results[:limit], limit=limit, offset=offset, has_more=has_more)
+
+
+@mcp.tool()
+def list_tournaments(
+    database: Optional[str] = None,
+    site: Optional[str] = None,
+    limit: int = 20,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """List tournament_summaries."""
+    db_path = _resolve_db(database)
+    limit = _clamp_limit(limit, 20)
+    where = []
+    params: List[Any] = []
+    if site:
+        where.append("LOWER(site) = LOWER(?)")
+        params.append(site)
+    sql = (
+        "SELECT tournament_id, site, buy_in_raw, buy_in_value, rake_value, "
+        "player_count, finish_position, prize, hero_name, imported_at "
+        "FROM tournament_summaries"
+    )
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY imported_at DESC LIMIT ? OFFSET ?"
+    params.extend([limit + 1, offset])
+    with SQLiteConnection(db_path) as conn:
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except sqlite3.Error:
+            return _ok_list([])
+        results = [dict(r) for r in rows]
+        has_more = len(results) > limit
+        return _ok_list(results[:limit], limit=limit, offset=offset, has_more=has_more)
+
+
+@mcp.tool()
+def query_hands(
+    site: Optional[str] = None,
+    game_type: Optional[str] = None,
+    is_tournament: Optional[bool] = None,
+    position: Optional[str] = None,
+    hero_cards: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    won: Optional[bool] = None,
+    min_profit: Optional[float] = None,
+    max_profit: Optional[float] = None,
+    limit: int = 10,
+    offset: int = 0,
+    format: str = "summary",
+    include_raw: bool = False,
+    database: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Unified hand query with shared filters. Summary by default."""
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+    limit = _clamp_limit(limit)
+    where: List[str] = []
+    params: List[Any] = []
+    if site:
+        where.append("LOWER(site) = LOWER(?)")
+        params.append(site)
+    if game_type:
+        where.append("UPPER(game_type) = UPPER(?)")
+        params.append(game_type)
+    if is_tournament is True:
+        where.append("is_tournament = 1")
+    elif is_tournament is False:
+        where.append("is_tournament = 0")
+    if position:
+        where.append("UPPER(hero_position) = UPPER(?)")
+        params.append(position)
+    if hero_cards:
+        cards_sql, cards_params = build_cards_sql(hero_cards)
+        if not cards_sql:
+            raise ValueError("Invalid hero_cards")
+        where.append(f"({cards_sql})")
+        params.extend(cards_params)
+    if date_from:
+        where.append("date >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("date <= ?")
+        params.append(date_to)
+    if won is True:
+        where.append("hero_won > 0")
+    elif won is False:
+        where.append("hero_won < 0")
+    if min_profit is not None:
+        where.append("hero_won >= ?")
+        params.append(min_profit)
+    if max_profit is not None:
+        where.append("hero_won <= ?")
+        params.append(max_profit)
+    where_str = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
+    hands = query_and_serialize_hands(
+        db, settings, sql, params + [limit + 1, offset],
+        format=format, include_raw=include_raw,
+    )
+    has_more = len(hands) > limit
+    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
 
 
 @mcp.tool()
