@@ -649,6 +649,71 @@ export async function dbQuery(env, sql, params = []) {
   return resp.json();
 }
 
+// ---------- D1 (cloud DB: leaksnipe-hands) ----------
+
+export function requireD1(env) {
+  if (!env?.DB) {
+    throw new Error(
+      'D1 binding "DB" (leaksnipe-hands) is not configured — add the [[d1_databases]] block in wrangler.toml and redeploy'
+    );
+  }
+  return env.DB;
+}
+
+export async function d1All(env, sql, params = []) {
+  const res = await requireD1(env).prepare(sql).bind(...params).all();
+  return res.results || [];
+}
+
+export async function d1Run(env, sql, params = []) {
+  return requireD1(env).prepare(sql).bind(...params).run();
+}
+
+export async function d1First(env, sql, params = []) {
+  const stmt = requireD1(env).prepare(sql);
+  return (params.length ? stmt.bind(...params) : stmt).first();
+}
+
+/** Static coaching-schema reference served by list_full_schemas (kept in parity with the live worker). */
+export const COACHING_SCHEMA = {
+  databases: {
+    poker_hands: {
+      tables: {
+        hands: {
+          description:
+            'Hand histories. hero_won is USD for cash (is_tournament=0) and tournament CHIPS for MTT (is_tournament=1). Never mix units.',
+          columns: ['hand_id', 'site', 'hand_number', 'date', 'game_type', 'is_tournament', 'tournament_id', 'buy_in', 'table_name', 'max_seats', 'button_seat', 'hero_cards', 'board_cards', 'pot', 'rake', 'hero_won', 'hero_position', 'raw_text', 'source_file', 'imported_at'],
+        },
+        players: { description: 'Seats: name, stack, is_hero', columns: ['id', 'hand_id', 'seat', 'name', 'stack', 'is_hero'] },
+        actions: { description: 'Street actions with amounts', columns: ['id', 'hand_id', 'street', 'sequence', 'player', 'action', 'amount'] },
+        winners: { description: 'Collected amounts', columns: ['id', 'hand_id', 'player_name', 'amount'] },
+        hand_tags: { description: 'Tags on hands', columns: ['hand_id', 'tag', 'created_at'] },
+        player_types: { description: 'HUD sample stats', columns: ['name', 'site', 'auto_type', 'manual_type', 'hands', 'vpip', 'pfr', 'af', 'fold_cbet', 'wtsd', 'updated_at', 'three_bet'] },
+        player_position_facts: { description: 'Per-hand VPIP/PFR by position', columns: ['hand_id', 'player', 'position', 'vpip', 'pfr', 'updated_at'] },
+        tournament_summaries: { description: 'MTT results', columns: ['tournament_id', 'site', 'buy_in_raw', 'buy_in_value', 'rake_value', 'player_count', 'finish_position', 'prize', 'hero_name', 'imported_at'] },
+        ai_analysis: { description: 'Stored AI coach notes per hand', columns: ['hand_id', 'llm_provider', 'play_style', 'mistakes_found', 'tags', 'summary', 'ev_estimate', 'raw_response', 'analyzed_at'] },
+        ocr_imports: { description: 'OCR captures', columns: ['id', 'image_path', 'ocr_text', 'parsed_cards', 'parsed_pot', 'parsed_bets', 'parsed_blinds', 'notes', 'hand_id', 'created_at'] },
+      },
+    },
+    coach_memory: {
+      tables: {
+        coach_memory: {
+          description: 'Cross-session coaching dialogue memory',
+          columns: ['id', 'hero', 'kind', 'user_text', 'assistant_text', 'provider', 'created_at'],
+        },
+      },
+    },
+  },
+  heroes: {
+    Gboss101: ['Gboss101', 'GBOSS101', 'gboss101'],
+    jdwalka: ['jdwalka', 'JohnDaWalka', 'Johndawalka'],
+  },
+  units: {
+    cash: 'hero_won and pot are dollars when is_tournament=0',
+    tournament: 'hero_won and pot are chips when is_tournament=1 — never report as $',
+  },
+};
+
 export async function queryHands(env, filters = {}, opts = {}) {
   const q = buildHandQuery({ ...filters, ...opts }, opts);
   const raw = await dbQuery(env, q.sql, q.params);

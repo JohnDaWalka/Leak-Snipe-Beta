@@ -29,6 +29,11 @@ import {
   validateHandData,
   dbProxyHeaders,
   dbQuery,
+  requireD1,
+  d1All,
+  d1Run,
+  d1First,
+  COACHING_SCHEMA,
   queryHands,
   proxyLocalMcp,
   HAND_HISTORY_BUCKETS,
@@ -807,6 +812,444 @@ export function registerAllTools(server) {
       const raw = await dbQuery(env, sql, params);
       const { rows, has_more } = applyHasMore(raw.results || [], limit);
       return okList(rows, { limit, offset, has_more });
+    }
+  );
+
+  // ========== D1 COACHING READS (parity with deployed worker) ==========
+  // These 8 tools existed only on the live worker (added outside version
+  // control); ported here so a repo deploy no longer removes them. Names,
+  // schemas, and response shapes match the deployed versions exactly.
+
+  server.registerTool(
+    'list_full_schemas',
+    {
+      description:
+        'List ALL coaching database schemas (local + cloud): tables, columns, unit rules for cash vs chips, and hero aliases. Call this first for deep coaching.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      let d1_tables = [];
+      let catalog = [];
+      try {
+        if (env.DB) {
+          d1_tables = (await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).map((x) => x.name);
+          try {
+            catalog = await d1All(env, 'SELECT * FROM schema_catalog ORDER BY table_name');
+          } catch (_) {}
+        }
+      } catch (e) {
+        d1_tables = { error: e.message };
+      }
+      return {
+        coaching_schema: COACHING_SCHEMA,
+        d1_tables,
+        schema_catalog: catalog,
+        sources: {
+          live_desktop: 'https://db.leaksnipe.win/query (tauri_db_* tools)',
+          cloud_d1: 'env.DB leaksnipe-hands (d1_* tools)',
+          r2_histories: 'HAND_HISTORY_R2 / R2_POKER_* buckets',
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'd1_list_tables',
+    {
+      description: 'List tables in Cloudflare D1 (leaksnipe-hands) coaching database.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      const rows = await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+      return { tables: rows.map((x) => x.name) };
+    }
+  );
+
+  server.registerTool(
+    'd1_describe_table',
+    {
+      description: 'Describe columns for a D1 table (PRAGMA table_info).',
+      properties: { table: { type: 'string', description: 'Table name e.g. hands, ai_analysis, coach_memory' } },
+      required: ['table'],
+    },
+    async (args, env) => {
+      const table = String(args.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+      if (!table) throw new Error('Invalid table');
+      const rows = await d1All(env, `PRAGMA table_info(${table})`);
+      return { table, columns: rows };
+    }
+  );
+
+  server.registerTool(
+    'd1_query',
+    {
+      description:
+        'Read-only SELECT against Cloudflare D1 coaching DB. Use for offline coaching when desktop tunnel is down. Never mix cash $ with tournament chips — filter is_tournament.',
+      properties: {
+        sql: { type: 'string', description: 'SELECT or WITH query only' },
+        params: { type: 'array', description: 'Bound parameters', items: {} },
+      },
+      required: ['sql'],
+    },
+    async (args, env) => {
+      const sql = String(args.sql || '').trim();
+      const lower = sql.toLowerCase();
+      if (!(lower.startsWith('select') || lower.startsWith('with') || lower.startsWith('pragma'))) {
+        throw new Error('Only SELECT/WITH/PRAGMA allowed on D1');
+      }
+      if (/;/.test(sql.replace(/;+\s*$/, ''))) throw new Error('Multiple statements not allowed');
+      const stmt = requireD1(env).prepare(sql);
+      const r = await ((args.params || []).length ? stmt.bind(...args.params) : stmt).all();
+      return { results: r.results || [], meta: r.meta || null };
+    }
+  );
+
+  server.registerTool(
+    'd1_hero_overview',
+    {
+      description:
+        'Hero coaching snapshot from D1: hand counts, cash $ net vs tournament chip net (separated), by site. Heroes: Gboss101 / jdwalka aliases.',
+      properties: {
+        hero: { type: 'string', description: 'Hero filter: gboss101, jdwalka, or exact name. Empty = all heroes.' },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const hero = (args.hero || '').trim().toLowerCase();
+      let nameClause = 'p.is_hero = 1';
+      const binds = [];
+      if (hero.includes('gboss')) {
+        nameClause += " AND lower(p.name) LIKE '%gboss101%'";
+      } else if (hero.includes('jdwalk') || hero.includes('johnda')) {
+        nameClause += " AND (lower(p.name) LIKE '%jdwalka%' OR lower(p.name) LIKE '%johndawalka%')";
+      } else if (hero) {
+        nameClause += ' AND lower(p.name) = lower(?)';
+        binds.push(hero);
+      }
+      // EXISTS instead of JOIN: a hand with multiple matching player rows
+      // (dual-source imports, duplicated exports) must still count once.
+      const sql = `
+        SELECT
+          CASE WHEN h.is_tournament = 1 THEN 'tournament_chips' ELSE 'cash_usd' END AS unit,
+          h.site,
+          COUNT(*) AS hands,
+          ROUND(SUM(h.hero_won), 2) AS net,
+          ROUND(AVG(h.hero_won), 2) AS avg_result,
+          MIN(h.date) AS first_hand,
+          MAX(h.date) AS last_hand
+        FROM hands h
+        WHERE EXISTS (SELECT 1 FROM players p WHERE p.hand_id = h.hand_id AND ${nameClause})
+        GROUP BY unit, h.site
+        ORDER BY unit, hands DESC`;
+      const rows = await d1All(env, sql, binds);
+      return {
+        hero: hero || 'all',
+        note: 'cash_usd rows are dollars; tournament_chips rows are chips — never add them together',
+        breakdown: rows,
+      };
+    }
+  );
+
+  server.registerTool(
+    'd1_list_ai_analyses',
+    {
+      description: 'List stored AI coach analyses (ai_analysis table) for leak review.',
+      properties: {
+        limit: { type: 'number', default: 20 },
+        has_mistakes: { type: 'boolean', description: 'Only hands with mistakes_found > 0' },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      let sql =
+        'SELECT hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at FROM ai_analysis';
+      if (args.has_mistakes) sql += ' WHERE COALESCE(mistakes_found, 0) > 0';
+      sql += ' ORDER BY analyzed_at DESC LIMIT ?';
+      const rows = await d1All(env, sql, [limit]);
+      return { analyses: rows };
+    }
+  );
+
+  server.registerTool(
+    'd1_coach_memory',
+    {
+      description: 'Read coach_memory dialogue history for a hero (cross-session coaching context).',
+      properties: {
+        hero: { type: 'string', description: 'Hero name filter' },
+        limit: { type: 'number', default: 20 },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      const hero = (args.hero || '').trim();
+      let sql = 'SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory';
+      const binds = [];
+      if (hero) {
+        sql += ' WHERE lower(hero) LIKE lower(?)';
+        binds.push(`%${hero}%`);
+      }
+      sql += ' ORDER BY created_at DESC LIMIT ?';
+      binds.push(limit);
+      try {
+        const rows = await d1All(env, sql, binds);
+        return { memories: rows };
+      } catch (e) {
+        return { memories: [], error: e.message, hint: 'Run D1 migration 0002_coaching_tables.sql and re-export coach_memory.db' };
+      }
+    }
+  );
+
+  server.registerTool(
+    'd1_database_summary',
+    {
+      description:
+        'High-level D1 counts: hands, players, actions, ai_analysis, coach_memory, cash vs tournament split.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      const counts = {};
+      for (const t of ['hands', 'players', 'actions', 'winners', 'hand_tags', 'player_types', 'ai_analysis', 'coach_memory', 'tournament_summaries']) {
+        try {
+          const row = await d1First(env, `SELECT COUNT(*) AS c FROM ${t}`);
+          counts[t] = row?.c ?? 0;
+        } catch {
+          counts[t] = null;
+        }
+      }
+      let unit_split = [];
+      try {
+        unit_split = await d1All(
+          env,
+          `SELECT is_tournament, site, COUNT(*) AS hands,
+          ROUND(SUM(hero_won), 2) AS net
+          FROM hands GROUP BY is_tournament, site`
+        );
+      } catch (_) {}
+      return { counts, unit_split, note: 'is_tournament=1 nets are chips; is_tournament=0 nets are USD' };
+    }
+  );
+
+  // ========== AI MEMORY (cloud D1: leaksnipe-hands) ==========
+  // Structured, schema-validated writes to the annotation tables only
+  // (ai_analysis, coach_memory, hand_tags). Raw SQL writes stay admin-gated.
+  // These land in the cloud D1 copy — the desktop tunnel stays read-only.
+
+  async function d1HandExists(env, hand_id) {
+    const rows = await d1All(env, 'SELECT 1 FROM hands WHERE hand_id = ? LIMIT 1', [hand_id]);
+    return rows.length > 0;
+  }
+
+  server.registerTool(
+    'save_ai_analysis',
+    {
+      description:
+        'Persist (upsert) an AI hand review into ai_analysis, keyed by hand_id. ' +
+        'Use after analyzing a hand so the review survives the conversation. ' +
+        'Overwrites any prior analysis for the same hand_id.',
+      properties: {
+        hand_id: { type: 'string', description: 'Hand id (e.g. ACR_2760551680)' },
+        summary: { type: 'string', description: 'Concise review: key decision points and verdicts' },
+        play_style: { type: 'string', description: 'Observed style label (e.g. overly-passive, spewy-3bet)' },
+        mistakes_found: { type: 'number', description: 'Count of mistakes identified (0 = clean hand)' },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Leak/theme tags (also mirrored into hand_tags for filtering)',
+        },
+        ev_estimate: { type: 'number', description: 'Estimated EV lost/gained in chips (computed, not guessed)' },
+        raw_response: { type: 'string', description: 'Full analysis text (optional, can be large)' },
+        llm_provider: { type: 'string', description: 'Provider label for provenance', default: 'mcp' },
+        require_hand: {
+          type: 'boolean',
+          description: 'Reject if hand_id is not in the cloud hands table (default true)',
+          default: true,
+        },
+      },
+      required: ['hand_id', 'summary'],
+    },
+    async (args, env) => {
+      const hand_id = String(args.hand_id || '').trim();
+      if (!hand_id) throw new Error('hand_id is required');
+      if (args.require_hand !== false && !(await d1HandExists(env, hand_id))) {
+        throw new Error(
+          `Unknown hand_id ${hand_id} in cloud DB. Check the id, or pass require_hand=false to store anyway.`
+        );
+      }
+      const tags = Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean).slice(0, 20) : [];
+      const row = {
+        llm_provider: String(args.llm_provider || 'mcp'),
+        play_style: args.play_style != null ? String(args.play_style) : null,
+        mistakes_found: args.mistakes_found != null ? Number(args.mistakes_found) : null,
+        tags: tags.length ? tags.join(',') : null,
+        summary: String(args.summary),
+        ev_estimate: args.ev_estimate != null ? Number(args.ev_estimate) : null,
+        raw_response: args.raw_response != null ? String(args.raw_response) : null,
+      };
+      // update-then-insert: works whether or not hand_id has a UNIQUE constraint
+      const upd = await d1Run(
+        env,
+        `UPDATE ai_analysis SET llm_provider=?, play_style=?, mistakes_found=?, tags=?, summary=?, ev_estimate=?, raw_response=?, analyzed_at=datetime('now') WHERE hand_id=?`,
+        [row.llm_provider, row.play_style, row.mistakes_found, row.tags, row.summary, row.ev_estimate, row.raw_response, hand_id]
+      );
+      let mode = 'updated';
+      if (!upd.meta || !upd.meta.changes) {
+        await d1Run(
+          env,
+          `INSERT INTO ai_analysis (hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, raw_response, analyzed_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
+          [hand_id, row.llm_provider, row.play_style, row.mistakes_found, row.tags, row.summary, row.ev_estimate, row.raw_response]
+        );
+        mode = 'inserted';
+      }
+      // mirror tags into hand_tags so query_hands tag filters find this hand
+      for (const tag of tags) {
+        await d1Run(
+          env,
+          `INSERT INTO hand_tags (hand_id, tag, created_at) SELECT ?, ?, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM hand_tags WHERE hand_id=? AND LOWER(tag)=LOWER(?))`,
+          [hand_id, tag, hand_id, tag]
+        );
+      }
+      return { success: true, mode, hand_id, tags_mirrored: tags.length };
+    }
+  );
+
+  server.registerTool(
+    'save_coach_memory',
+    {
+      description:
+        'Append a durable coaching memory (cross-session). Use for leak findings, adjustments, ' +
+        'session takeaways, or villain reads you want remembered next time. ' +
+        'Pair with get_coach_memory to recall.',
+      properties: {
+        hero: { type: 'string', description: 'Hero this memory belongs to (jdwalka or Gboss101; aliases resolve)' },
+        kind: {
+          type: 'string',
+          description: 'Memory type: note | leak | adjustment | session_review | hand_review | villain_read',
+          default: 'note',
+        },
+        user_text: { type: 'string', description: 'What the user said/asked (context for the memory)' },
+        assistant_text: { type: 'string', description: 'The finding/advice to remember' },
+        provider: { type: 'string', description: 'Provenance label', default: 'mcp' },
+      },
+      required: ['hero', 'assistant_text'],
+    },
+    async (args, env) => {
+      const hero = String(args.hero || '').trim();
+      if (!hero) throw new Error('hero is required');
+      const res = await d1Run(
+        env,
+        `INSERT INTO coach_memory (hero, kind, user_text, assistant_text, provider, created_at) VALUES (?,?,?,?,?,datetime('now'))`,
+        [
+          hero,
+          String(args.kind || 'note'),
+          args.user_text != null ? String(args.user_text) : null,
+          String(args.assistant_text),
+          String(args.provider || 'mcp'),
+        ]
+      );
+      return { success: true, id: res.meta?.last_row_id ?? null, hero, kind: String(args.kind || 'note') };
+    }
+  );
+
+  server.registerTool(
+    'get_coach_memory',
+    {
+      description:
+        'Recall stored coaching memories. Filters: hero (aliases resolve), kind, search text. ' +
+        'Newest first. Use at the start of a coaching conversation to load context.',
+      properties: {
+        hero: { type: 'string', description: 'Hero filter (jdwalka/JohnDaWalka/Gboss101 all match their group)' },
+        kind: { type: 'string', description: 'Memory type filter (note, leak, adjustment, …)' },
+        search: { type: 'string', description: 'Substring match over user_text and assistant_text' },
+        limit: { type: 'number', default: 20, minimum: 1, maximum: 100 },
+        offset: { type: 'number', default: 0 },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const where = [];
+      const params = [];
+      if (args?.hero) {
+        const aliases = expandPlayerAliases(args.hero).map((a) => a.toLowerCase());
+        where.push(`LOWER(hero) IN (${aliases.map(() => '?').join(',')})`);
+        params.push(...aliases);
+      }
+      if (args?.kind) {
+        where.push('LOWER(kind) = LOWER(?)');
+        params.push(args.kind);
+      }
+      if (args?.search) {
+        where.push('(user_text LIKE ? OR assistant_text LIKE ?)');
+        const term = '%' + String(args.search) + '%';
+        params.push(term, term);
+      }
+      const limit = clampLimit(args?.limit, 20);
+      const offset = clampOffset(args?.offset);
+      let sql = 'SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory';
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?';
+      params.push(limit + 1, offset);
+      const rowsAll = await d1All(env, sql, params);
+      const { rows, has_more } = applyHasMore(rowsAll, limit);
+      return okList(rows, { limit, offset, has_more });
+    }
+  );
+
+  server.registerTool(
+    'add_hand_tag',
+    {
+      description: 'Tag a hand (e.g. "missed-value", "hero-call", "review-later"). Idempotent.',
+      properties: {
+        hand_id: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'One or more tags to add' },
+        tag: { type: 'string', description: 'Single tag (alias for tags)' },
+      },
+      required: ['hand_id'],
+    },
+    async (args, env) => {
+      const hand_id = String(args.hand_id || '').trim();
+      if (!hand_id) throw new Error('hand_id is required');
+      const tags = [
+        ...(Array.isArray(args.tags) ? args.tags : []),
+        ...(args.tag ? [args.tag] : []),
+      ].map(String).filter(Boolean).slice(0, 20);
+      if (!tags.length) throw new Error('Provide tag or tags');
+      if (!(await d1HandExists(env, hand_id))) {
+        throw new Error(`Unknown hand_id ${hand_id} in cloud DB`);
+      }
+      let added = 0;
+      for (const tag of tags) {
+        const res = await d1Run(
+          env,
+          `INSERT INTO hand_tags (hand_id, tag, created_at) SELECT ?, ?, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM hand_tags WHERE hand_id=? AND LOWER(tag)=LOWER(?))`,
+          [hand_id, tag, hand_id, tag]
+        );
+        if (res.meta?.changes) added++;
+      }
+      return { success: true, hand_id, added, already_present: tags.length - added };
+    }
+  );
+
+  server.registerTool(
+    'remove_hand_tag',
+    {
+      description: 'Remove a tag from a hand (case-insensitive).',
+      properties: {
+        hand_id: { type: 'string' },
+        tag: { type: 'string' },
+      },
+      required: ['hand_id', 'tag'],
+    },
+    async (args, env) => {
+      const res = await d1Run(env, 'DELETE FROM hand_tags WHERE hand_id = ? AND LOWER(tag) = LOWER(?)', [
+        String(args.hand_id),
+        String(args.tag),
+      ]);
+      return { success: true, removed: res.meta?.changes ?? 0 };
     }
   );
 

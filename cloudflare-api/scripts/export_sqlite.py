@@ -20,6 +20,12 @@ TABLES = (
     "player_types", "tournament_summaries", "player_position_facts",
 )
 
+# Tables keyed by an auto-increment id (or nothing): INSERT OR REPLACE cannot
+# dedupe them across exports — local ids renumber when the DB is rebuilt, so a
+# re-import silently doubles every row. Wipe them before reloading. Tables with
+# stable natural keys (hands, player_types, ...) replace in place and are left out.
+WIPE_BEFORE_LOAD = ("players", "actions", "winners", "ocr_imports", "hand_tags")
+
 
 def main() -> None:
     if not SOURCE.exists():
@@ -28,6 +34,8 @@ def main() -> None:
     conn = sqlite3.connect(SOURCE)
     try:
         with OUTPUT.open("w", encoding="utf-8", newline="\n") as target:
+            for table in WIPE_BEFORE_LOAD:
+                target.write(f'DELETE FROM "{table}";\n')
             for table in TABLES:
                 exists = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)

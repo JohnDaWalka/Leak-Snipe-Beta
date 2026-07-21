@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Tuple
 
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 POSITIONS = ("UTG", "UTG+1", "UTG+2", "MP", "HJ", "CO", "BTN", "SB", "BB")
 
 
@@ -168,6 +168,81 @@ def read_player_position_stats(
     return result
 
 
+def rebuild_player_types_site_scoped(conn: sqlite3.Connection) -> int:
+    """Rebuild player_types with PRIMARY KEY (name, site).
+
+    The original schema keyed player_types on `name` alone, so the same
+    player name on two different sites silently overwrote each other's HUD
+    stats via INSERT OR REPLACE. This backfills blank/missing `site` values
+    from the player's actual hand history (most frequent site for that name
+    in players/hands), then rebuilds the table so name+site rows can coexist.
+    When backfilling still leaves two old rows mapped to the same (name, site)
+    key, the row with more sample hands wins.
+    """
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='player_types'"
+    ).fetchone()
+    if not has_table:
+        return 0
+
+    site_counts: Dict[str, Dict[str, int]] = defaultdict(dict)
+    for name, site, count in conn.execute(
+        "SELECT p.name, h.site, COUNT(*) FROM players p "
+        "JOIN hands h ON h.hand_id = p.hand_id "
+        "WHERE p.is_hero = 0 AND p.name IS NOT NULL "
+        "GROUP BY p.name, h.site"
+    ):
+        site_counts[name][site] = count
+    inferred_site: Dict[str, str] = {
+        name: max(by_site.items(), key=lambda kv: kv[1])[0]
+        for name, by_site in site_counts.items()
+    }
+
+    old_rows = conn.execute(
+        "SELECT name, site, auto_type, manual_type, hands, vpip, pfr, af, "
+        "fold_cbet, wtsd, updated_at, three_bet FROM player_types"
+    ).fetchall()
+
+    conn.execute("ALTER TABLE player_types RENAME TO player_types_pre_v3")
+    conn.execute(
+        """CREATE TABLE player_types (
+            name TEXT NOT NULL,
+            site TEXT NOT NULL DEFAULT '',
+            auto_type TEXT DEFAULT 'Unknown',
+            manual_type TEXT DEFAULT '',
+            hands INTEGER DEFAULT 0,
+            vpip REAL DEFAULT 0,
+            pfr REAL DEFAULT 0,
+            af REAL DEFAULT 0,
+            fold_cbet REAL DEFAULT 0,
+            wtsd REAL DEFAULT 0,
+            updated_at TEXT,
+            three_bet REAL DEFAULT 0,
+            PRIMARY KEY (name, site)
+        )"""
+    )
+
+    best: Dict[Tuple[str, str], Tuple] = {}
+    for row in old_rows:
+        name, site = row[0], row[1]
+        resolved_site = site or inferred_site.get(name, "")
+        key = (name, resolved_site)
+        candidate = (name, resolved_site) + tuple(row[2:])
+        existing = best.get(key)
+        if existing is None or (row[4] or 0) > (existing[4] or 0):
+            best[key] = candidate
+
+    for row in best.values():
+        conn.execute(
+            "INSERT INTO player_types (name, site, auto_type, manual_type, hands, "
+            "vpip, pfr, af, fold_cbet, wtsd, updated_at, three_bet) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            row,
+        )
+    conn.execute("DROP TABLE player_types_pre_v3")
+    return len(best)
+
+
 def apply_migrations(conn: sqlite3.Connection) -> Dict[str, int]:
     """Apply idempotent migrations after the baseline tables exist."""
     owns_transaction = not conn.in_transaction
@@ -217,6 +292,13 @@ def apply_migrations(conn: sqlite3.Connection) -> Dict[str, int]:
             conn.execute(
                 "INSERT INTO schema_migrations(version, name, applied_at) VALUES (2, ?, ?)",
                 ("incremental_player_position_facts", _utc_now()),
+            )
+
+        if 3 not in applied:
+            rebuild_player_types_site_scoped(conn)
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (3, ?, ?)",
+                ("player_types_site_scoped", _utc_now()),
             )
 
         reconcile_missing_position_facts(conn)

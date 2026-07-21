@@ -447,8 +447,8 @@ class HandDatabase:
                         FOREIGN KEY (hand_id) REFERENCES hands(hand_id)
                     );
                     CREATE TABLE IF NOT EXISTS player_types (
-                        name TEXT PRIMARY KEY,
-                        site TEXT DEFAULT '',
+                        name TEXT NOT NULL,
+                        site TEXT NOT NULL DEFAULT '',
                         auto_type TEXT DEFAULT 'Unknown',
                         manual_type TEXT DEFAULT '',
                         hands INTEGER DEFAULT 0,
@@ -457,7 +457,9 @@ class HandDatabase:
                         af REAL DEFAULT 0,
                         fold_cbet REAL DEFAULT 0,
                         wtsd REAL DEFAULT 0,
-                        updated_at TEXT
+                        updated_at TEXT,
+                        three_bet REAL DEFAULT 0,
+                        PRIMARY KEY (name, site)
                     );
                     CREATE INDEX IF NOT EXISTS idx_hands_date ON hands(date DESC);
                     CREATE INDEX IF NOT EXISTS idx_players_hand_id ON players(hand_id);
@@ -799,11 +801,15 @@ class HandDatabase:
 
 
     def save_player_type(self, name, auto_type, hands, vpip, pfr, af, fold_cbet, wtsd, site="", three_bet=0.0):
+        """Save player statistics and type, scoped to (name, site) so stats for the
+        same name on different sites never overwrite each other."""
         with self.lock:
             conn = self._connect()
             try:
                 existing = conn.execute(
-                    "SELECT manual_type FROM player_types WHERE name = ?", (name,)).fetchone()
+                    "SELECT manual_type FROM player_types "
+                    "WHERE name = ? AND manual_type != '' ORDER BY updated_at DESC LIMIT 1",
+                    (name,)).fetchone()
                 manual = existing[0] if existing else ""
                 conn.execute(
                     "INSERT OR REPLACE INTO player_types "
@@ -815,41 +821,70 @@ class HandDatabase:
             finally:
                 conn.close()
 
-    def set_manual_player_type(self, name, manual_type):
+    def set_manual_player_type(self, name, manual_type, site=None):
+        """Without `site`, the override applies to every site row for that name
+        (the "override player type" UI has no site selector). Pass `site` to
+        scope it to one specific (name, site) row instead."""
         with self.lock:
             conn = self._connect()
             try:
-                conn.execute(
-                    "UPDATE player_types SET manual_type = ?, updated_at = ? WHERE name = ?",
-                    (manual_type, datetime.now().isoformat(), name))
-                if conn.total_changes == 0:
+                if site is not None:
                     conn.execute(
-                        "INSERT INTO player_types (name, manual_type, updated_at) VALUES (?, ?, ?)",
-                        (name, manual_type, datetime.now().isoformat()))
+                        "UPDATE player_types SET manual_type = ?, updated_at = ? "
+                        "WHERE name = ? AND site = ?",
+                        (manual_type, datetime.now().isoformat(), name, site))
+                    if conn.total_changes == 0:
+                        conn.execute(
+                            "INSERT INTO player_types (name, site, manual_type, updated_at) VALUES (?, ?, ?, ?)",
+                            (name, site, manual_type, datetime.now().isoformat()))
+                else:
+                    conn.execute(
+                        "UPDATE player_types SET manual_type = ?, updated_at = ? WHERE name = ?",
+                        (manual_type, datetime.now().isoformat(), name))
+                    if conn.total_changes == 0:
+                        conn.execute(
+                            "INSERT INTO player_types (name, site, manual_type, updated_at) VALUES (?, '', ?, ?)",
+                            (name, manual_type, datetime.now().isoformat()))
                 conn.commit()
             finally:
                 conn.close()
 
-    def get_player_type(self, name):
+    def get_player_type(self, name, site=None):
+        """Get player type and statistics.
+
+        If `site` is given, returns that exact (name, site) row. Otherwise picks
+        the row with the most sample hands, so a name on multiple sites returns
+        a deterministic result instead of whichever row was written last.
+        """
         with self.lock:
             conn = self._connect()
             try:
-                row = conn.execute(
-                    "SELECT auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet "
-                    "FROM player_types WHERE name = ?", (name,)).fetchone()
+                if site is not None:
+                    row = conn.execute(
+                        "SELECT auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet, site "
+                        "FROM player_types WHERE name = ? AND site = ?", (name, site)).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet, site "
+                        "FROM player_types WHERE name = ? ORDER BY hands DESC LIMIT 1", (name,)).fetchone()
                 if not row:
                     return None
                 return {
                     "auto_type": row[0], "manual_type": row[1], "hands": row[2],
                     "vpip": row[3], "pfr": row[4], "af": row[5],
                     "fold_cbet": row[6], "wtsd": row[7], "three_bet": row[8] or 0.0,
+                    "site": row[9],
                     "effective_type": row[1] if row[1] else row[0],
                 }
             finally:
                 conn.close()
 
-    def get_player_types_batch(self, names):
-        """Fetch cached HUD stats for multiple players in one query."""
+    def get_player_types_batch(self, names, site=None):
+        """Fetch cached HUD stats for multiple players in one query.
+
+        Same disambiguation rule as get_player_type: without `site`, the row
+        with the most sample hands wins for each name.
+        """
         if not names:
             return {}
         unique = list(dict.fromkeys(n for n in names if n))
@@ -859,17 +894,26 @@ class HandDatabase:
         with self.lock:
             conn = self._connect()
             try:
+                params = list(unique)
+                site_clause = ""
+                if site is not None:
+                    site_clause = " AND site = ?"
+                    params.append(site)
                 rows = conn.execute(
-                    f"SELECT name, auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet "
-                    f"FROM player_types WHERE name IN ({placeholders})",
-                    unique,
+                    f"SELECT name, auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet, site "
+                    f"FROM player_types WHERE name IN ({placeholders}){site_clause}",
+                    params,
                 ).fetchall()
                 result = {}
                 for row in rows:
-                    result[row[0]] = {
+                    name_key = row[0]
+                    if name_key in result and result[name_key]["hands"] >= (row[3] or 0):
+                        continue
+                    result[name_key] = {
                         "auto_type": row[1], "manual_type": row[2], "hands": row[3],
                         "vpip": row[4], "pfr": row[5], "af": row[6],
                         "fold_cbet": row[7], "wtsd": row[8], "three_bet": row[9] or 0.0,
+                        "site": row[10],
                         "effective_type": row[2] if row[2] else row[1],
                     }
                 return result
