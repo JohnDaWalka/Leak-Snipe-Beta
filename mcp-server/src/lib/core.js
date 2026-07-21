@@ -649,6 +649,26 @@ export async function dbQuery(env, sql, params = []) {
   return resp.json();
 }
 
+// ---------- D1 (cloud DB: leaksnipe-hands) ----------
+
+export function requireD1(env) {
+  if (!env?.DB) {
+    throw new Error(
+      'D1 binding "DB" (leaksnipe-hands) is not configured — add the [[d1_databases]] block in wrangler.toml and redeploy'
+    );
+  }
+  return env.DB;
+}
+
+export async function d1All(env, sql, params = []) {
+  const res = await requireD1(env).prepare(sql).bind(...params).all();
+  return res.results || [];
+}
+
+export async function d1Run(env, sql, params = []) {
+  return requireD1(env).prepare(sql).bind(...params).run();
+}
+
 export async function queryHands(env, filters = {}, opts = {}) {
   const q = buildHandQuery({ ...filters, ...opts }, opts);
   const raw = await dbQuery(env, q.sql, q.params);

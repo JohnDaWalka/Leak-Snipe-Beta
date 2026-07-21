@@ -29,6 +29,22 @@ Version **2.0.0** of the Cloudflare worker (`mcp.leaksnipe.win`) plus aligned lo
 
 Legacy tools (`get_recent_hands`, `search_hands`, …) keep their names but share filters, summary default, and pagination.
 
+## AI memory tools (cloud D1 writes)
+
+Structured, schema-validated writes to the annotation tables only — the AI can persist
+what it learns without raw SQL or admin keys. Requires the `DB` D1 binding
+(`leaksnipe-hands`, see `wrangler.toml`). The desktop tunnel (`db.leaksnipe.win`)
+stays read-only; these land in the cloud copy.
+
+| Tool | Notes |
+|------|--------|
+| `save_ai_analysis` | Upsert hand review into `ai_analysis` by `hand_id`; mirrors `tags` into `hand_tags`; rejects unknown hand ids unless `require_hand=false` |
+| `save_coach_memory` | Append durable cross-session memory (`hero`, `kind`, `assistant_text`) |
+| `get_coach_memory` | Recall memories — hero aliases resolve, `kind`/`search` filters, newest first |
+| `add_hand_tag` / `remove_hand_tag` | Idempotent tag management on `hand_tags` |
+
+Raw SQL writes remain gated behind `allow_write` + `admin_key` as before.
+
 ## Shared filter properties
 
 ```

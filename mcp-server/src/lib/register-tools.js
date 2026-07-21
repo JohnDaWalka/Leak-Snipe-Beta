@@ -29,6 +29,8 @@ import {
   validateHandData,
   dbProxyHeaders,
   dbQuery,
+  d1All,
+  d1Run,
   queryHands,
   proxyLocalMcp,
   HAND_HISTORY_BUCKETS,
@@ -807,6 +809,225 @@ export function registerAllTools(server) {
       const raw = await dbQuery(env, sql, params);
       const { rows, has_more } = applyHasMore(raw.results || [], limit);
       return okList(rows, { limit, offset, has_more });
+    }
+  );
+
+  // ========== AI MEMORY (cloud D1: leaksnipe-hands) ==========
+  // Structured, schema-validated writes to the annotation tables only
+  // (ai_analysis, coach_memory, hand_tags). Raw SQL writes stay admin-gated.
+  // These land in the cloud D1 copy — the desktop tunnel stays read-only.
+
+  async function d1HandExists(env, hand_id) {
+    const rows = await d1All(env, 'SELECT 1 FROM hands WHERE hand_id = ? LIMIT 1', [hand_id]);
+    return rows.length > 0;
+  }
+
+  server.registerTool(
+    'save_ai_analysis',
+    {
+      description:
+        'Persist (upsert) an AI hand review into ai_analysis, keyed by hand_id. ' +
+        'Use after analyzing a hand so the review survives the conversation. ' +
+        'Overwrites any prior analysis for the same hand_id.',
+      properties: {
+        hand_id: { type: 'string', description: 'Hand id (e.g. ACR_2760551680)' },
+        summary: { type: 'string', description: 'Concise review: key decision points and verdicts' },
+        play_style: { type: 'string', description: 'Observed style label (e.g. overly-passive, spewy-3bet)' },
+        mistakes_found: { type: 'number', description: 'Count of mistakes identified (0 = clean hand)' },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Leak/theme tags (also mirrored into hand_tags for filtering)',
+        },
+        ev_estimate: { type: 'number', description: 'Estimated EV lost/gained in chips (computed, not guessed)' },
+        raw_response: { type: 'string', description: 'Full analysis text (optional, can be large)' },
+        llm_provider: { type: 'string', description: 'Provider label for provenance', default: 'mcp' },
+        require_hand: {
+          type: 'boolean',
+          description: 'Reject if hand_id is not in the cloud hands table (default true)',
+          default: true,
+        },
+      },
+      required: ['hand_id', 'summary'],
+    },
+    async (args, env) => {
+      const hand_id = String(args.hand_id || '').trim();
+      if (!hand_id) throw new Error('hand_id is required');
+      if (args.require_hand !== false && !(await d1HandExists(env, hand_id))) {
+        throw new Error(
+          `Unknown hand_id ${hand_id} in cloud DB. Check the id, or pass require_hand=false to store anyway.`
+        );
+      }
+      const tags = Array.isArray(args.tags) ? args.tags.map(String).filter(Boolean).slice(0, 20) : [];
+      const row = {
+        llm_provider: String(args.llm_provider || 'mcp'),
+        play_style: args.play_style != null ? String(args.play_style) : null,
+        mistakes_found: args.mistakes_found != null ? Number(args.mistakes_found) : null,
+        tags: tags.length ? tags.join(',') : null,
+        summary: String(args.summary),
+        ev_estimate: args.ev_estimate != null ? Number(args.ev_estimate) : null,
+        raw_response: args.raw_response != null ? String(args.raw_response) : null,
+      };
+      // update-then-insert: works whether or not hand_id has a UNIQUE constraint
+      const upd = await d1Run(
+        env,
+        `UPDATE ai_analysis SET llm_provider=?, play_style=?, mistakes_found=?, tags=?, summary=?, ev_estimate=?, raw_response=?, analyzed_at=datetime('now') WHERE hand_id=?`,
+        [row.llm_provider, row.play_style, row.mistakes_found, row.tags, row.summary, row.ev_estimate, row.raw_response, hand_id]
+      );
+      let mode = 'updated';
+      if (!upd.meta || !upd.meta.changes) {
+        await d1Run(
+          env,
+          `INSERT INTO ai_analysis (hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, raw_response, analyzed_at) VALUES (?,?,?,?,?,?,?,?,datetime('now'))`,
+          [hand_id, row.llm_provider, row.play_style, row.mistakes_found, row.tags, row.summary, row.ev_estimate, row.raw_response]
+        );
+        mode = 'inserted';
+      }
+      // mirror tags into hand_tags so query_hands tag filters find this hand
+      for (const tag of tags) {
+        await d1Run(
+          env,
+          `INSERT INTO hand_tags (hand_id, tag, created_at) SELECT ?, ?, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM hand_tags WHERE hand_id=? AND LOWER(tag)=LOWER(?))`,
+          [hand_id, tag, hand_id, tag]
+        );
+      }
+      return { success: true, mode, hand_id, tags_mirrored: tags.length };
+    }
+  );
+
+  server.registerTool(
+    'save_coach_memory',
+    {
+      description:
+        'Append a durable coaching memory (cross-session). Use for leak findings, adjustments, ' +
+        'session takeaways, or villain reads you want remembered next time. ' +
+        'Pair with get_coach_memory to recall.',
+      properties: {
+        hero: { type: 'string', description: 'Hero this memory belongs to (jdwalka or Gboss101; aliases resolve)' },
+        kind: {
+          type: 'string',
+          description: 'Memory type: note | leak | adjustment | session_review | hand_review | villain_read',
+          default: 'note',
+        },
+        user_text: { type: 'string', description: 'What the user said/asked (context for the memory)' },
+        assistant_text: { type: 'string', description: 'The finding/advice to remember' },
+        provider: { type: 'string', description: 'Provenance label', default: 'mcp' },
+      },
+      required: ['hero', 'assistant_text'],
+    },
+    async (args, env) => {
+      const hero = String(args.hero || '').trim();
+      if (!hero) throw new Error('hero is required');
+      const res = await d1Run(
+        env,
+        `INSERT INTO coach_memory (hero, kind, user_text, assistant_text, provider, created_at) VALUES (?,?,?,?,?,datetime('now'))`,
+        [
+          hero,
+          String(args.kind || 'note'),
+          args.user_text != null ? String(args.user_text) : null,
+          String(args.assistant_text),
+          String(args.provider || 'mcp'),
+        ]
+      );
+      return { success: true, id: res.meta?.last_row_id ?? null, hero, kind: String(args.kind || 'note') };
+    }
+  );
+
+  server.registerTool(
+    'get_coach_memory',
+    {
+      description:
+        'Recall stored coaching memories. Filters: hero (aliases resolve), kind, search text. ' +
+        'Newest first. Use at the start of a coaching conversation to load context.',
+      properties: {
+        hero: { type: 'string', description: 'Hero filter (jdwalka/JohnDaWalka/Gboss101 all match their group)' },
+        kind: { type: 'string', description: 'Memory type filter (note, leak, adjustment, …)' },
+        search: { type: 'string', description: 'Substring match over user_text and assistant_text' },
+        limit: { type: 'number', default: 20, minimum: 1, maximum: 100 },
+        offset: { type: 'number', default: 0 },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const where = [];
+      const params = [];
+      if (args?.hero) {
+        const aliases = expandPlayerAliases(args.hero).map((a) => a.toLowerCase());
+        where.push(`LOWER(hero) IN (${aliases.map(() => '?').join(',')})`);
+        params.push(...aliases);
+      }
+      if (args?.kind) {
+        where.push('LOWER(kind) = LOWER(?)');
+        params.push(args.kind);
+      }
+      if (args?.search) {
+        where.push('(user_text LIKE ? OR assistant_text LIKE ?)');
+        const term = '%' + String(args.search) + '%';
+        params.push(term, term);
+      }
+      const limit = clampLimit(args?.limit, 20);
+      const offset = clampOffset(args?.offset);
+      let sql = 'SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory';
+      if (where.length) sql += ' WHERE ' + where.join(' AND ');
+      sql += ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?';
+      params.push(limit + 1, offset);
+      const rowsAll = await d1All(env, sql, params);
+      const { rows, has_more } = applyHasMore(rowsAll, limit);
+      return okList(rows, { limit, offset, has_more });
+    }
+  );
+
+  server.registerTool(
+    'add_hand_tag',
+    {
+      description: 'Tag a hand (e.g. "missed-value", "hero-call", "review-later"). Idempotent.',
+      properties: {
+        hand_id: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' }, description: 'One or more tags to add' },
+        tag: { type: 'string', description: 'Single tag (alias for tags)' },
+      },
+      required: ['hand_id'],
+    },
+    async (args, env) => {
+      const hand_id = String(args.hand_id || '').trim();
+      if (!hand_id) throw new Error('hand_id is required');
+      const tags = [
+        ...(Array.isArray(args.tags) ? args.tags : []),
+        ...(args.tag ? [args.tag] : []),
+      ].map(String).filter(Boolean).slice(0, 20);
+      if (!tags.length) throw new Error('Provide tag or tags');
+      if (!(await d1HandExists(env, hand_id))) {
+        throw new Error(`Unknown hand_id ${hand_id} in cloud DB`);
+      }
+      let added = 0;
+      for (const tag of tags) {
+        const res = await d1Run(
+          env,
+          `INSERT INTO hand_tags (hand_id, tag, created_at) SELECT ?, ?, datetime('now') WHERE NOT EXISTS (SELECT 1 FROM hand_tags WHERE hand_id=? AND LOWER(tag)=LOWER(?))`,
+          [hand_id, tag, hand_id, tag]
+        );
+        if (res.meta?.changes) added++;
+      }
+      return { success: true, hand_id, added, already_present: tags.length - added };
+    }
+  );
+
+  server.registerTool(
+    'remove_hand_tag',
+    {
+      description: 'Remove a tag from a hand (case-insensitive).',
+      properties: {
+        hand_id: { type: 'string' },
+        tag: { type: 'string' },
+      },
+      required: ['hand_id', 'tag'],
+    },
+    async (args, env) => {
+      const res = await d1Run(env, 'DELETE FROM hand_tags WHERE hand_id = ? AND LOWER(tag) = LOWER(?)', [
+        String(args.hand_id),
+        String(args.tag),
+      ]);
+      return { success: true, removed: res.meta?.changes ?? 0 };
     }
   );
 
