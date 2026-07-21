@@ -928,6 +928,8 @@ export function registerAllTools(server) {
         nameClause += ' AND lower(p.name) = lower(?)';
         binds.push(hero);
       }
+      // EXISTS instead of JOIN: a hand with multiple matching player rows
+      // (dual-source imports, duplicated exports) must still count once.
       const sql = `
         SELECT
           CASE WHEN h.is_tournament = 1 THEN 'tournament_chips' ELSE 'cash_usd' END AS unit,
@@ -938,7 +940,7 @@ export function registerAllTools(server) {
           MIN(h.date) AS first_hand,
           MAX(h.date) AS last_hand
         FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND ${nameClause}
+        WHERE EXISTS (SELECT 1 FROM players p WHERE p.hand_id = h.hand_id AND ${nameClause})
         GROUP BY unit, h.site
         ORDER BY unit, hands DESC`;
       const rows = await d1All(env, sql, binds);
