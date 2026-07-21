@@ -1305,14 +1305,24 @@ export function registerAllTools(server) {
           GROUP BY h.hero_position`,
           [playerName, range]
         );
+        // times_3bet_or_more counts hands where the PLAYER's own preflop raise
+        // was itself a re-raise (a prior preflop raise by anyone already
+        // existed at a lower sequence) — a 3-bet, 4-bet, etc. The previous
+        // version counted total preflop bet/raise actions by anyone in the
+        // hand, which measures "the hand saw multiple raises," not the
+        // player's own 3-bet frequency.
         const threeBetStats = await dbQuery(
           env,
           `SELECT
             COUNT(*) AS total_hands_preflop,
-            SUM(CASE WHEN (
-              SELECT COUNT(*) FROM actions a2 WHERE a2.hand_id = h.hand_id AND a2.street = 'Preflop'
-                AND a2.action IN ('bet','raise')
-            ) >= 2 THEN 1 ELSE 0 END) AS times_3bet_or_more
+            SUM(CASE WHEN EXISTS (
+              SELECT 1 FROM actions a2 WHERE a2.hand_id = h.hand_id AND a2.street = 'Preflop'
+                AND a2.player = p.name AND a2.action = 'raise'
+                AND EXISTS (
+                  SELECT 1 FROM actions a3 WHERE a3.hand_id = a2.hand_id AND a3.street = 'Preflop'
+                    AND a3.action = 'raise' AND a3.sequence < a2.sequence
+                )
+            ) THEN 1 ELSE 0 END) AS times_3bet_or_more
           FROM hands h
           JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
           WHERE h.date >= datetime('now', ?)
