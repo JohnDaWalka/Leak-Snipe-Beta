@@ -45,6 +45,15 @@ stays read-only; these land in the cloud copy.
 
 Raw SQL writes remain gated behind `allow_write` + `admin_key` as before.
 
+## D1 coaching reads (parity with deployed worker)
+
+The `d1_*` read suite (`list_full_schemas`, `d1_list_tables`, `d1_describe_table`,
+`d1_query`, `d1_hero_overview`, `d1_list_ai_analyses`, `d1_coach_memory`,
+`d1_database_summary`) originally existed only on the deployed worker — added
+outside version control — and would have been wiped by a repo deploy. They are
+now ported here with identical names, schemas, and response shapes, so the repo
+is the full source of truth for the live worker again.
+
 ## Shared filter properties
 
 ```

@@ -29,8 +29,11 @@ import {
   validateHandData,
   dbProxyHeaders,
   dbQuery,
+  requireD1,
   d1All,
   d1Run,
+  d1First,
+  COACHING_SCHEMA,
   queryHands,
   proxyLocalMcp,
   HAND_HISTORY_BUCKETS,
@@ -809,6 +812,223 @@ export function registerAllTools(server) {
       const raw = await dbQuery(env, sql, params);
       const { rows, has_more } = applyHasMore(raw.results || [], limit);
       return okList(rows, { limit, offset, has_more });
+    }
+  );
+
+  // ========== D1 COACHING READS (parity with deployed worker) ==========
+  // These 8 tools existed only on the live worker (added outside version
+  // control); ported here so a repo deploy no longer removes them. Names,
+  // schemas, and response shapes match the deployed versions exactly.
+
+  server.registerTool(
+    'list_full_schemas',
+    {
+      description:
+        'List ALL coaching database schemas (local + cloud): tables, columns, unit rules for cash vs chips, and hero aliases. Call this first for deep coaching.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      let d1_tables = [];
+      let catalog = [];
+      try {
+        if (env.DB) {
+          d1_tables = (await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")).map((x) => x.name);
+          try {
+            catalog = await d1All(env, 'SELECT * FROM schema_catalog ORDER BY table_name');
+          } catch (_) {}
+        }
+      } catch (e) {
+        d1_tables = { error: e.message };
+      }
+      return {
+        coaching_schema: COACHING_SCHEMA,
+        d1_tables,
+        schema_catalog: catalog,
+        sources: {
+          live_desktop: 'https://db.leaksnipe.win/query (tauri_db_* tools)',
+          cloud_d1: 'env.DB leaksnipe-hands (d1_* tools)',
+          r2_histories: 'HAND_HISTORY_R2 / R2_POKER_* buckets',
+        },
+      };
+    }
+  );
+
+  server.registerTool(
+    'd1_list_tables',
+    {
+      description: 'List tables in Cloudflare D1 (leaksnipe-hands) coaching database.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      const rows = await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
+      return { tables: rows.map((x) => x.name) };
+    }
+  );
+
+  server.registerTool(
+    'd1_describe_table',
+    {
+      description: 'Describe columns for a D1 table (PRAGMA table_info).',
+      properties: { table: { type: 'string', description: 'Table name e.g. hands, ai_analysis, coach_memory' } },
+      required: ['table'],
+    },
+    async (args, env) => {
+      const table = String(args.table || '').replace(/[^a-zA-Z0-9_]/g, '');
+      if (!table) throw new Error('Invalid table');
+      const rows = await d1All(env, `PRAGMA table_info(${table})`);
+      return { table, columns: rows };
+    }
+  );
+
+  server.registerTool(
+    'd1_query',
+    {
+      description:
+        'Read-only SELECT against Cloudflare D1 coaching DB. Use for offline coaching when desktop tunnel is down. Never mix cash $ with tournament chips — filter is_tournament.',
+      properties: {
+        sql: { type: 'string', description: 'SELECT or WITH query only' },
+        params: { type: 'array', description: 'Bound parameters', items: {} },
+      },
+      required: ['sql'],
+    },
+    async (args, env) => {
+      const sql = String(args.sql || '').trim();
+      const lower = sql.toLowerCase();
+      if (!(lower.startsWith('select') || lower.startsWith('with') || lower.startsWith('pragma'))) {
+        throw new Error('Only SELECT/WITH/PRAGMA allowed on D1');
+      }
+      if (/;/.test(sql.replace(/;+\s*$/, ''))) throw new Error('Multiple statements not allowed');
+      const stmt = requireD1(env).prepare(sql);
+      const r = await ((args.params || []).length ? stmt.bind(...args.params) : stmt).all();
+      return { results: r.results || [], meta: r.meta || null };
+    }
+  );
+
+  server.registerTool(
+    'd1_hero_overview',
+    {
+      description:
+        'Hero coaching snapshot from D1: hand counts, cash $ net vs tournament chip net (separated), by site. Heroes: Gboss101 / jdwalka aliases.',
+      properties: {
+        hero: { type: 'string', description: 'Hero filter: gboss101, jdwalka, or exact name. Empty = all heroes.' },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const hero = (args.hero || '').trim().toLowerCase();
+      let nameClause = 'p.is_hero = 1';
+      const binds = [];
+      if (hero.includes('gboss')) {
+        nameClause += " AND lower(p.name) LIKE '%gboss101%'";
+      } else if (hero.includes('jdwalk') || hero.includes('johnda')) {
+        nameClause += " AND (lower(p.name) LIKE '%jdwalka%' OR lower(p.name) LIKE '%johndawalka%')";
+      } else if (hero) {
+        nameClause += ' AND lower(p.name) = lower(?)';
+        binds.push(hero);
+      }
+      const sql = `
+        SELECT
+          CASE WHEN h.is_tournament = 1 THEN 'tournament_chips' ELSE 'cash_usd' END AS unit,
+          h.site,
+          COUNT(*) AS hands,
+          ROUND(SUM(h.hero_won), 2) AS net,
+          ROUND(AVG(h.hero_won), 2) AS avg_result,
+          MIN(h.date) AS first_hand,
+          MAX(h.date) AS last_hand
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND ${nameClause}
+        GROUP BY unit, h.site
+        ORDER BY unit, hands DESC`;
+      const rows = await d1All(env, sql, binds);
+      return {
+        hero: hero || 'all',
+        note: 'cash_usd rows are dollars; tournament_chips rows are chips — never add them together',
+        breakdown: rows,
+      };
+    }
+  );
+
+  server.registerTool(
+    'd1_list_ai_analyses',
+    {
+      description: 'List stored AI coach analyses (ai_analysis table) for leak review.',
+      properties: {
+        limit: { type: 'number', default: 20 },
+        has_mistakes: { type: 'boolean', description: 'Only hands with mistakes_found > 0' },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      let sql =
+        'SELECT hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at FROM ai_analysis';
+      if (args.has_mistakes) sql += ' WHERE COALESCE(mistakes_found, 0) > 0';
+      sql += ' ORDER BY analyzed_at DESC LIMIT ?';
+      const rows = await d1All(env, sql, [limit]);
+      return { analyses: rows };
+    }
+  );
+
+  server.registerTool(
+    'd1_coach_memory',
+    {
+      description: 'Read coach_memory dialogue history for a hero (cross-session coaching context).',
+      properties: {
+        hero: { type: 'string', description: 'Hero name filter' },
+        limit: { type: 'number', default: 20 },
+      },
+      required: [],
+    },
+    async (args, env) => {
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      const hero = (args.hero || '').trim();
+      let sql = 'SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory';
+      const binds = [];
+      if (hero) {
+        sql += ' WHERE lower(hero) LIKE lower(?)';
+        binds.push(`%${hero}%`);
+      }
+      sql += ' ORDER BY created_at DESC LIMIT ?';
+      binds.push(limit);
+      try {
+        const rows = await d1All(env, sql, binds);
+        return { memories: rows };
+      } catch (e) {
+        return { memories: [], error: e.message, hint: 'Run D1 migration 0002_coaching_tables.sql and re-export coach_memory.db' };
+      }
+    }
+  );
+
+  server.registerTool(
+    'd1_database_summary',
+    {
+      description:
+        'High-level D1 counts: hands, players, actions, ai_analysis, coach_memory, cash vs tournament split.',
+      properties: {},
+      required: [],
+    },
+    async (_args, env) => {
+      const counts = {};
+      for (const t of ['hands', 'players', 'actions', 'winners', 'hand_tags', 'player_types', 'ai_analysis', 'coach_memory', 'tournament_summaries']) {
+        try {
+          const row = await d1First(env, `SELECT COUNT(*) AS c FROM ${t}`);
+          counts[t] = row?.c ?? 0;
+        } catch {
+          counts[t] = null;
+        }
+      }
+      let unit_split = [];
+      try {
+        unit_split = await d1All(
+          env,
+          `SELECT is_tournament, site, COUNT(*) AS hands,
+          ROUND(SUM(hero_won), 2) AS net
+          FROM hands GROUP BY is_tournament, site`
+        );
+      } catch (_) {}
+      return { counts, unit_split, note: 'is_tournament=1 nets are chips; is_tournament=0 nets are USD' };
     }
   );
 
