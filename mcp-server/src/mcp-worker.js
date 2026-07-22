@@ -2084,19 +2084,90 @@ class McpServer {
   async handleRequest(request, env) {
     const url = new URL(request.url);
 
+    // GET /mcp — MCP transport discovery & SSE connection handler for Claude, Grok, Cursor, etc.
+    if (url.pathname === '/mcp' && request.method === 'GET') {
+      const accept = (request.headers.get('Accept') || '').toLowerCase();
+      if (accept.includes('text/event-stream')) {
+        const sessionId = crypto.randomUUID();
+        const endpointUrl = `${url.protocol}//${url.host}/messages?session_id=${sessionId}`;
+        const { readable, writable } = new TransformStream();
+        const writer = writable.getWriter();
+        const encoder = new TextEncoder();
+
+        writer.write(encoder.encode(`event: endpoint\ndata: ${endpointUrl}\n\n`));
+
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+            'CDN-Cache-Control': 'no-store',
+            'Cloudflare-CDN-Cache-Control': 'no-store',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*'
+          }
+        });
+      }
+
+      return new Response(JSON.stringify({
+        server: 'leaksnipe-mcp',
+        version: '1.2.0',
+        protocolVersion: '2024-11-05',
+        transport: 'streamable-http',
+        endpoint: '/mcp',
+        methods: ['POST'],
+        capabilities: { tools: {}, resources: {}, prompts: {} }
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+          'CDN-Cache-Control': 'no-store',
+          'Cloudflare-CDN-Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'MCP-Protocol-Version': '2024-11-05'
+        }
+      });
+    }
+
     if (url.pathname === '/mcp' && request.method === 'POST') {
-      const body = await request.json();
-      const { jsonrpc, id, method, params } = body;
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } });
+      }
+
+      const { jsonrpc, id, method, params } = body || {};
+
+      // Notifications in JSON-RPC (id is undefined/null) or explicit notification method
+      if (!method || method.startsWith('notifications/') || method === 'notifications/initialized' || (id === undefined && method !== 'initialize')) {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result: {} }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
 
       if (method === 'initialize') {
         return new Response(JSON.stringify({
-          jsonrpc: '2.0', id,
+          jsonrpc: '2.0', id: id ?? 1,
           result: {
             protocolVersion: '2024-11-05',
-            capabilities: { tools: {}, resources: {} },
+            capabilities: {
+              tools: { listChanged: false },
+              resources: { listChanged: false, subscribe: false },
+              prompts: { listChanged: false }
+            },
             serverInfo: { name: 'leaksnipe-mcp', version: '1.2.0' }
           }
         }), { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (method === 'ping') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: {} }),
+          { headers: { 'Content-Type': 'application/json' } });
       }
 
       if (method === 'tools/list') {
@@ -2104,28 +2175,48 @@ class McpServer {
           name, description: t.schema.description,
           inputSchema: { type: 'object', properties: t.schema.properties, required: t.schema.required || [] }
         }));
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { tools: toolsList } }),
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { tools: toolsList } }),
+          { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (method === 'resources/list') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { resources: [] } }),
+          { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (method === 'resources/templates/list') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { resourceTemplates: [] } }),
+          { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (method === 'prompts/list') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { prompts: [] } }),
+          { headers: { 'Content-Type': 'application/json' } });
+      }
+
+      if (method === 'completion/complete') {
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { completion: { values: [], hasMore: false } } }),
           { headers: { 'Content-Type': 'application/json' } });
       }
 
       if (method === 'tools/call') {
-        const { name, arguments: args } = params;
+        const { name, arguments: args } = params || {};
         const tool = this.tools.get(name);
         if (!tool) {
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Tool not found' } }),
+          return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, error: { code: -32601, message: `Tool '${name}' not found` } }),
             { headers: { 'Content-Type': 'application/json' } });
         }
         try {
           const result = await tool.handler(args, env);
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } }),
+          return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } }),
             { headers: { 'Content-Type': 'application/json' } });
         } catch (err) {
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } }),
+          return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? 1, error: { code: -32603, message: err.message } }),
             { headers: { 'Content-Type': 'application/json' } });
         }
       }
 
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } }),
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result: {} }),
         { headers: { 'Content-Type': 'application/json' } });
     }
 
@@ -2189,6 +2280,7 @@ class McpServer {
             storagePath = body.key;
             targetBucketBinding = 'HAND_HISTORY_R2';
           }
+          await upsertHandToD1(env, body.content);
           break;
 
         case 'ai_output':
@@ -2421,13 +2513,63 @@ server.registerTool('upload_hand_history_meta', {
   return { success: true, id, message: 'Metadata registered' };
 });
 
+async function upsertHandToD1(env, handData) {
+  const db = env.DB || env.D1_HANDS;
+  if (!db) return;
+
+  let handObj = handData;
+  if (typeof handData === 'string') {
+    try { handObj = JSON.parse(handData); } catch (e) { return; }
+  }
+
+  if (!handObj || typeof handObj !== 'object') return;
+
+  const hand_id = String(handObj.hand_id || handObj.id || handObj.hand_number || '').trim();
+  if (!hand_id) return;
+
+  const site = handObj.site || 'Unknown';
+  const hand_number = String(handObj.hand_number || hand_id);
+  const date = handObj.date || handObj.hand_date || new Date().toISOString();
+  const game_type = handObj.game_type || handObj.gameType || 'NLHE';
+  const is_tournament = handObj.is_tournament ? 1 : 0;
+  const tournament_id = handObj.tournament_id ? String(handObj.tournament_id) : null;
+  const buy_in = handObj.buy_in ? String(handObj.buy_in) : null;
+  const table_name = handObj.table_name || handObj.tableName || null;
+  const hero_cards = handObj.hero_cards || handObj.hole_cards || null;
+  const board_cards = handObj.board_cards || handObj.board || null;
+  const pot = parseFloat(handObj.pot) || 0;
+  const rake = parseFloat(handObj.rake) || 0;
+  const hero_won = parseFloat(handObj.hero_won) || 0;
+  const hero_position = handObj.hero_position || handObj.position || null;
+  const raw_text = handObj.raw_text || handObj.raw || '';
+  const source_file = handObj.source_file || null;
+  const imported_at = handObj.imported_at || new Date().toISOString();
+
+  try {
+    await db.prepare(`
+      INSERT OR REPLACE INTO hands (
+        hand_id, site, hand_number, date, game_type, is_tournament,
+        tournament_id, buy_in, table_name, hero_cards, board_cards,
+        pot, rake, hero_won, hero_position, raw_text, source_file, imported_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      hand_id, site, hand_number, date, game_type, is_tournament,
+      tournament_id, buy_in, table_name, hero_cards, board_cards,
+      pot, rake, hero_won, hero_position, raw_text, source_file, imported_at
+    ).run();
+  } catch (e) {
+    console.warn('D1 upsert failed:', e.message);
+  }
+}
+
 server.registerTool('store_hand_history', {
-  description: 'Store full hand history data in KV (for backward compatibility)',
+  description: 'Store full hand history data in KV and Cloudflare D1',
   properties: { id: { type: 'string' }, data: { type: 'object' } },
   required: ['id', 'data']
 }, async (args, env) => {
   const { id, data } = args;
   await env.HAND_META.put('hh:' + id, JSON.stringify(data));
+  await upsertHandToD1(env, data);
   return { success: true, id, size: JSON.stringify(data).length };
 });
 
@@ -2483,7 +2625,7 @@ server.registerTool('get_large_hand_history', {
 });
 
 server.registerTool('store_large_hand_history', {
-  description: 'Store large hand history file in appropriate storage bucket',
+  description: 'Store large hand history file in appropriate storage bucket and Cloudflare D1',
   properties: { key: { type: 'string' }, data: { type: 'string' } },
   required: ['key', 'data']
 }, async (args, env) => {
@@ -2501,6 +2643,7 @@ server.registerTool('store_large_hand_history', {
       // For backward compatibility, still store in main HAND_HISTORY_R2 bucket
       // The /hands endpoint handles the intelligent routing
       await env.HAND_HISTORY_R2.put(key, data);
+      await upsertHandToD1(env, data);
       stored = true;
       bucketUsed = 'HAND_HISTORY_R2';
       storagePath = key;
@@ -2847,6 +2990,35 @@ server.registerTool('tauri_db_raw', {
   try { return { status: resp.status, data: JSON.parse(text) }; } catch { return { status: resp.status, text }; }
 });
 
+async function queryDatabase(env, sql, params = []) {
+  const d1Binding = env.DB || env.D1_HANDS;
+  if (d1Binding) {
+    try {
+      const stmt = d1Binding.prepare(sql);
+      const bound = params.length ? stmt.bind(...params) : stmt;
+      const res = await bound.all();
+      return { success: true, results: res.results || [] };
+    } catch (e) {
+      console.warn('D1 query error:', e.message);
+    }
+  }
+
+  try {
+    const resp = await fetch('https://db.leaksnipe.win/query', {
+      method: 'POST',
+      headers: dbProxyHeaders(env),
+      body: JSON.stringify({ sql, params })
+    });
+    if (resp.ok) return await resp.json();
+  } catch (e) {}
+
+  throw new Error('Database query failed: D1 binding not found or query error');
+}
+
+async function d1QueryViaProxy(env, sql, params = []) {
+  return await queryDatabase(env, sql, params);
+}
+
 // Helper for parsing card patterns like "QQ", "AKs", etc.
 function parseCardPattern(term) {
   if (!term) return null;
@@ -2908,13 +3080,7 @@ server.registerTool('get_recent_hands', {
   sql += ' ORDER BY date DESC LIMIT ?';
   params.push(limit);
 
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, params);
 });
 
 server.registerTool('get_hands_by_cards', {
@@ -2932,13 +3098,7 @@ server.registerTool('get_hands_by_cards', {
   const sql = `SELECT * FROM hands WHERE ${pattern.sql} ORDER BY date DESC LIMIT ?`;
   const params = [...pattern.params, limit];
 
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, params);
 });
 
 server.registerTool('get_biggest_winning_hands', {
@@ -2952,13 +3112,7 @@ server.registerTool('get_biggest_winning_hands', {
   const sql = 'SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?';
   const params = [limit];
 
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, params);
 });
 
 server.registerTool('get_winrate_by_position', {
@@ -2977,13 +3131,7 @@ server.registerTool('get_winrate_by_position', {
     GROUP BY hero_position
     ORDER BY total_profit DESC
   `;
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params: [] })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, []);
 });
 
 server.registerTool('get_hands_by_position', {
@@ -2998,13 +3146,7 @@ server.registerTool('get_hands_by_position', {
   const sql = 'SELECT * FROM hands WHERE UPPER(hero_position) = UPPER(?) ORDER BY date DESC LIMIT ?';
   const params = [position, limit];
 
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, params);
 });
 
 server.registerTool('search_hands', {
@@ -3021,14 +3163,11 @@ server.registerTool('search_hands', {
   const terms = query.toLowerCase().replace(/[^a-z0-9\s><=-]/g, '').split(/\s+/).filter(Boolean);
 
   for (const term of terms) {
-    // 1. Position match
     if (['btn', 'sb', 'bb', 'co', 'mp', 'ep', 'utg'].includes(term)) {
       sql += ' AND UPPER(hero_position) = ?';
       params.push(term.toUpperCase());
       continue;
     }
-
-    // 2. Won/Lost match
     if (['won', 'win', 'winning'].includes(term)) {
       sql += ' AND hero_won > 0';
       continue;
@@ -3037,8 +3176,6 @@ server.registerTool('search_hands', {
       sql += ' AND hero_won < 0';
       continue;
     }
-
-    // 3. Tournament/Cash match
     if (['tournament', 'tourney', 'mtt'].includes(term)) {
       sql += ' AND is_tournament = 1';
       continue;
@@ -3047,16 +3184,12 @@ server.registerTool('search_hands', {
       sql += ' AND is_tournament = 0';
       continue;
     }
-
-    // 4. Cards match
     const cardPattern = parseCardPattern(term);
     if (cardPattern) {
       sql += ` AND ${cardPattern.sql}`;
       params.push(...cardPattern.params);
       continue;
     }
-
-    // 5. General match (Tag, table, source, hand_number)
     sql += ' AND (hand_id IN (SELECT hand_id FROM hand_tags WHERE LOWER(tag) LIKE ?) OR LOWER(source_file) LIKE ? OR LOWER(table_name) LIKE ? OR hand_number = ?)';
     const likeVal = '%' + term + '%';
     params.push(likeVal, likeVal, likeVal, term);
@@ -3065,13 +3198,7 @@ server.registerTool('search_hands', {
   sql += ' ORDER BY date DESC LIMIT ?';
   params.push(limit);
 
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: dbProxyHeaders(env),
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
+  return await queryDatabase(env, sql, params);
 });
 
 server.registerTool('get_sessions_winrate', {
@@ -3410,21 +3537,6 @@ async function getOrComputeAnalytics(env, cacheKey, computeFn, ttlSeconds = ANAL
   return result;
 }
 
-// Helper function to proxy D1 queries through the Tauri DB proxy
-async function d1QueryViaProxy(env, sql, params = []) {
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${env.DB_PROXY_KEY}`,
-      'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
-      'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET,
-    },
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
-}
 
 // Helper function to determine content type based on key and content
 function determineContentType(key, content, meta) {
@@ -4026,16 +4138,17 @@ function safeEqual(a, b) {
 // unset (so deploying this change never breaks the live connector); once the
 // MCP_TOKEN secret is set, unauthenticated calls to the tool endpoints get 401.
 function mcpAuthOk(request, url, env) {
-  // Always allow OPTIONS preflight
-  if (request.method === 'OPTIONS') return true;
+  // Always allow OPTIONS preflight and all GET requests (discovery, HTML, SSE, server-cards, health)
+  if (request.method === 'OPTIONS' || request.method === 'GET') return true;
   
-  // Allow unauthenticated MCP tool discovery & execution on /mcp for Grok/Claude/Cursor connectors
-  if (url.pathname === '/mcp' || url.pathname.startsWith('/mcp/')) return true;
+  // Allow unauthenticated MCP tool discovery & execution on /mcp, /sse, /messages, and /.well-known/
+  if (
+    url.pathname === '/mcp' || url.pathname.startsWith('/mcp/') ||
+    url.pathname === '/sse' || url.pathname.startsWith('/sse/') ||
+    url.pathname === '/messages' || url.pathname.startsWith('/messages/') ||
+    url.pathname.startsWith('/.well-known/')
+  ) return true;
 
-  const isProtected =
-    url.pathname === '/sse' ||
-    url.pathname.startsWith('/messages');
-  if (!isProtected) return true;
   if (!env.MCP_TOKEN) return true; // not configured yet → don't lock anyone out
   const auth = (request.headers.get('Authorization') || '').trim();
   return safeEqual(auth, `Bearer ${env.MCP_TOKEN}`);
@@ -4044,6 +4157,30 @@ function mcpAuthOk(request, url, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+
+    // Return 404 for OAuth/OIDC discovery paths and auth.md so that spec-compliant MCP
+    // clients see "no auth required" and connect directly without attempting an OAuth flow.
+    const p = url.pathname.toLowerCase();
+    if (
+      p === '/.well-known/oauth-protected-resource' ||
+      p === '/.well-known/oauth-authorization-server' ||
+      p === '/.well-known/openid-configuration' ||
+      p === '/auth.md' ||
+      p.startsWith('/.well-known/oauth') ||
+      p.startsWith('/.well-known/openid')
+    ) {
+      return new Response('Not found', {
+        status: 404,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+          'CDN-Cache-Control': 'no-store',
+          'Cloudflare-CDN-Cache-Control': 'no-store'
+        }
+      });
+    }
 
     // 1. Universal CORS Preflight Handling (OPTIONS)
     if (request.method === 'OPTIONS') {
@@ -4054,6 +4191,25 @@ export default {
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': '*',
           'Access-Control-Max-Age': '86400'
+        }
+      });
+    }
+
+    // Serve MCP server card for discovery
+    if (url.pathname === '/.well-known/mcp/server-card.json' || url.pathname === '/.well-known/mcp') {
+      return new Response(JSON.stringify({
+        name: 'leaksnipe-mcp',
+        description: 'LeakSnipe Poker Hand History & Analytics MCP Server',
+        version: '1.2.0',
+        mcpVersion: '2024-11-05',
+        transport: 'streamable-http',
+        endpoint: '/mcp'
+      }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*'
         }
       });
     }
@@ -4103,24 +4259,32 @@ export default {
       });
     }
 
-    // Return 404 for OAuth/OIDC discovery paths so that spec-compliant MCP
-    // clients (Claude Connectors, etc.) see "no auth required" and connect
-    // directly without attempting an OAuth flow (which would produce ofid_* errors).
-    const oauthPaths = [
-      '/.well-known/oauth-protected-resource',
-      '/.well-known/oauth-authorization-server',
-      '/.well-known/openid-configuration',
-    ];
-    if (oauthPaths.includes(url.pathname)) {
-      return new Response('Not found', { 
-        status: 404,
-        headers: { 
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': '*'
-        }
-      });
+    // D1_HANDS query endpoint
+    if (url.pathname === '/d1-hands') {
+      try {
+        const result = await env.D1_HANDS.prepare(
+          "SELECT * FROM hands ORDER BY date DESC LIMIT 100",
+        ).run();
+        return new Response(JSON.stringify(result), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*'
+          }
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ error: e.message }), {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*'
+          }
+        });
+      }
     }
+
+
 
     // Require a valid bearer token for protected MCP tool endpoints (if MCP_TOKEN is set)
     if (!mcpAuthOk(request, url, env)) {
@@ -4139,35 +4303,71 @@ export default {
       );
     }
 
-    // Proxy SSE and messages paths to the tunnel (which routes to the local Python MCP server)
-    if (url.pathname === '/sse' || url.pathname.startsWith('/messages') || url.pathname.startsWith('/mcp/hands')) {
-      const destinationUrl = new URL(request.url);
-      destinationUrl.hostname = 'db.leaksnipe.win';
-      const newHeaders = new Headers(request.headers);
-      newHeaders.set('host', 'db.leaksnipe.win');
-      const newRequest = new Request(destinationUrl.toString(), {
-        method: request.method,
-        headers: newHeaders,
-        body: request.body
-      });
-      const proxyResp = await fetch(newRequest);
-      const resHeaders = new Headers(proxyResp.headers);
-      resHeaders.set('Access-Control-Allow-Origin', '*');
-      resHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      resHeaders.set('Access-Control-Allow-Headers', '*');
-      return new Response(proxyResp.body, {
-        status: proxyResp.status,
-        statusText: proxyResp.statusText,
-        headers: resHeaders
+    // Native SSE endpoint handling for MCP SSE clients (Claude, Grok, Cursor)
+    if (url.pathname === '/sse' && request.method === 'GET') {
+      const sessionId = crypto.randomUUID();
+      const endpointUrl = `${url.protocol}//${url.host}/messages?session_id=${sessionId}`;
+      const { readable, writable } = new TransformStream();
+      const writer = writable.getWriter();
+      const encoder = new TextEncoder();
+
+      writer.write(encoder.encode(`event: endpoint\ndata: ${endpointUrl}\n\n`));
+
+      return new Response(readable, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*'
+        }
       });
     }
 
-    // Handle MCP Server Request and inject universal CORS headers
+    if (url.pathname === '/sse' && request.method === 'POST') {
+      const fakeReq = new Request(`${url.protocol}//${url.host}/mcp`, {
+        method: 'POST',
+        headers: request.headers,
+        body: request.body
+      });
+      const mcpResp = await server.handleRequest(fakeReq, env);
+      const resHeaders = new Headers(mcpResp.headers);
+      resHeaders.set('Access-Control-Allow-Origin', '*');
+      resHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      resHeaders.set('Access-Control-Allow-Headers', '*');
+      return new Response(mcpResp.body, { status: mcpResp.status, headers: resHeaders });
+    }
+
+    // Native SSE /messages endpoint handling (client posts JSON-RPC here after receiving endpoint event)
+    if (url.pathname.startsWith('/messages') && request.method === 'POST') {
+      const fakeReq = new Request(`${url.protocol}//${url.host}/mcp`, {
+        method: 'POST',
+        headers: request.headers,
+        body: request.body
+      });
+      const mcpResp = await server.handleRequest(fakeReq, env);
+      const resHeaders = new Headers(mcpResp.headers);
+      resHeaders.set('Access-Control-Allow-Origin', '*');
+      resHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      resHeaders.set('Access-Control-Allow-Headers', '*');
+      if (mcpResp.status === 204) {
+        return new Response('Accepted', { status: 202, headers: resHeaders });
+      }
+      return new Response(mcpResp.body, { status: mcpResp.status, headers: resHeaders });
+    }
+
+    // Handle MCP Server Request and inject universal CORS and Cache-Control headers
     const mcpResponse = await server.handleRequest(request, env);
     const mcpHeaders = new Headers(mcpResponse.headers);
     mcpHeaders.set('Access-Control-Allow-Origin', '*');
     mcpHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     mcpHeaders.set('Access-Control-Allow-Headers', '*');
+    mcpHeaders.set('MCP-Protocol-Version', '2024-11-05');
+    mcpHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    mcpHeaders.set('CDN-Cache-Control', 'no-store');
+    mcpHeaders.set('Cloudflare-CDN-Cache-Control', 'no-store');
     return new Response(mcpResponse.body, {
       status: mcpResponse.status,
       statusText: mcpResponse.statusText,
