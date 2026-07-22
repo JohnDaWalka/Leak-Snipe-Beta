@@ -2162,12 +2162,26 @@ class McpServer {
             },
             serverInfo: { name: 'leaksnipe-mcp', version: '1.2.0' }
           }
-        }), { headers: { 'Content-Type': 'application/json' } });
+        }), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': '*'
+          }
+        });
       }
 
       if (method === 'ping') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: {} }),
-          { headers: { 'Content-Type': 'application/json' } });
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': '*'
+            }
+          });
       }
 
       if (method === 'tools/list') {
@@ -2176,7 +2190,14 @@ class McpServer {
           inputSchema: { type: 'object', properties: t.schema.properties, required: t.schema.required || [] }
         }));
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { tools: toolsList } }),
-          { headers: { 'Content-Type': 'application/json' } });
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+              'Access-Control-Allow-Headers': '*'
+            }
+          });
       }
 
       if (method === 'resources/list') {
@@ -2202,17 +2223,23 @@ class McpServer {
       if (method === 'tools/call') {
         const { name, arguments: args } = params || {};
         const tool = this.tools.get(name);
+        const corsHeaders = {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*'
+        };
         if (!tool) {
           return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `Tool '${name}' not found` } }),
-            { headers: { 'Content-Type': 'application/json' } });
+            { headers: corsHeaders });
         }
         try {
           const result = await tool.handler(args, env);
           return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } }),
-            { headers: { 'Content-Type': 'application/json' } });
+            { headers: corsHeaders });
         } catch (err) {
           return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } }),
-            { headers: { 'Content-Type': 'application/json' } });
+            { headers: corsHeaders });
         }
       }
 
@@ -4360,18 +4387,19 @@ export default {
 
     // Handle MCP Server Request and inject universal CORS and Cache-Control headers
     const mcpResponse = await server.handleRequest(request, env);
-    const mcpHeaders = new Headers(mcpResponse.headers);
-    mcpHeaders.set('Access-Control-Allow-Origin', '*');
-    mcpHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    mcpHeaders.set('Access-Control-Allow-Headers', '*');
-    mcpHeaders.set('MCP-Protocol-Version', '2024-11-05');
-    mcpHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
-    mcpHeaders.set('CDN-Cache-Control', 'no-store');
-    mcpHeaders.set('Cloudflare-CDN-Cache-Control', 'no-store');
-    return new Response(mcpResponse.body, {
+    const body = await mcpResponse.text();
+    return new Response(body, {
       status: mcpResponse.status,
-      statusText: mcpResponse.statusText,
-      headers: mcpHeaders
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*',
+        'MCP-Protocol-Version': '2024-11-05',
+        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
+        'CDN-Cache-Control': 'no-store',
+        'Cloudflare-CDN-Cache-Control': 'no-store'
+      }
     });
   },
 

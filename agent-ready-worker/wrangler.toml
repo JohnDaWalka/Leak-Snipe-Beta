@@ -1,0 +1,14 @@
+name = "leaksnipe-agent-ready"
+main = "src/index.js"
+compatibility_date = "2026-07-17"
+
+[[services]]
+binding = "ORIGIN"
+service = "leaksnipe"
+environment = "production"
+
+[observability.logs]
+enabled = true
+
+[observability.traces]
+enabled = true
