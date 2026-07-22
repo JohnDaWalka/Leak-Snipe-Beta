@@ -4388,18 +4388,20 @@ export default {
     // Handle MCP Server Request and inject universal CORS and Cache-Control headers
     const mcpResponse = await server.handleRequest(request, env);
     const body = await mcpResponse.text();
+    const respHeaders = new Headers();
+    respHeaders.append('Content-Type', 'application/json');
+    respHeaders.append('Access-Control-Allow-Origin', '*');
+    respHeaders.append('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    respHeaders.append('Access-Control-Allow-Headers', '*');
+    respHeaders.append('Access-Control-Max-Age', '86400');
+    respHeaders.append('MCP-Protocol-Version', '2024-11-05');
+    respHeaders.append('Cache-Control', 'no-cache, no-store, must-revalidate, max-age=0');
+    respHeaders.append('CDN-Cache-Control', 'no-store');
+    respHeaders.append('Cloudflare-CDN-Cache-Control', 'no-store');
+    respHeaders.append('X-MCP-Enabled', 'true');
     return new Response(body, {
       status: mcpResponse.status,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': '*',
-        'MCP-Protocol-Version': '2024-11-05',
-        'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0',
-        'CDN-Cache-Control': 'no-store',
-        'Cloudflare-CDN-Cache-Control': 'no-store'
-      }
+      headers: respHeaders
     });
   },
 
