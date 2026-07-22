@@ -5,14 +5,11 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-# Catch-all so the landing HTML (and MCP) always hit this worker, not an older binding.
-# routes = [
-#   { pattern = "leaksnipe.win/*", zone_name = "leaksnipe.win" },
-#   { pattern = "leaksnipe.win", zone_name = "leaksnipe.win" },
-#   { pattern = "www.leaksnipe.win/*", zone_name = "leaksnipe.win" },
-#   { pattern = "www.leaksnipe.win", zone_name = "leaksnipe.win" },
-#   { pattern = "*.leaksnipe.win/*", zone_name = "leaksnipe.win" },
-# ]
+# Custom domain so every wrangler deploy always owns worker.leaksnipe.win
+[[routes]]
+pattern = "worker.leaksnipe.win"
+custom_domain = true
+zone_name = "leaksnipe.win"
 
 # Default Worker limit is too low for D1 coaching queries
 [limits]
