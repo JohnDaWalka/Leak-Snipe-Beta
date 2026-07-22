@@ -5,12 +5,6 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = true
 
-# Route for the main domain
-[[routes]]
-pattern = "leaksnipe.win"
-custom_domain = true
-zone_name = "leaksnipe.win"
-
 # Route for the worker subdomain
 [[routes]]
 pattern = "worker.leaksnipe.win"
