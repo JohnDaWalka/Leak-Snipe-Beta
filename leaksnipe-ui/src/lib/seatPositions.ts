@@ -6,7 +6,7 @@ export type SeatLayoutKey = 2 | 6 | 9;
 
 export const HUD_EDGE_MARGIN_PCT_DEFAULT = 0.12;
 
-export const HUD_BADGE_SCALE_DEFAULT = 1.5;
+export const HUD_BADGE_SCALE_DEFAULT = 0.9;
 
 
 
@@ -22,19 +22,24 @@ export const SEAT_POSITIONS: Record<SeatLayoutKey, Record<number, [number, numbe
 
   },
 
+  // Calibrated against a live CoinPoker 6-max table (2026-07-19): measured
+  // avatar centers as fractions of the table window were TL(0.14,0.16),
+  // TC(0.50,0.14), TR(0.86,0.16), BL(0.12,0.60), BR(0.88,0.60) — slots below
+  // are those nudged a little toward the table center so badges sit next to,
+  // not on top of, the avatar/nameplate.
   6: {
 
     1: [0.5, 0.88],
 
-    2: [0.76, 0.74],
+    2: [0.86, 0.58],
 
-    3: [0.78, 0.34],
+    3: [0.84, 0.20],
 
-    4: [0.62, 0.12],
+    4: [0.5, 0.16],
 
-    5: [0.38, 0.12],
+    5: [0.16, 0.20],
 
-    6: [0.22, 0.34],
+    6: [0.14, 0.58],
 
   },
 
@@ -107,11 +112,27 @@ type SeatMapEntry = { name?: string; is_hero?: boolean };
 
 
 /**
+ * Sites whose seat numbers advance counter-clockwise around the table (e.g.
+ * BetACR — matches SEAT_POSITIONS' own slot ordering, which was fitted to
+ * BetACR tables). Any site NOT in this set is treated as clockwise (verified
+ * live against CoinPoker on 2026-07-19: seat N+1 sits to the hero's left,
+ * i.e. clockwise — the opposite of BetACR) and has its offset direction
+ * flipped in buildHeroAnchoredSeatSlots. If a new site turns out to also be
+ * counter-clockwise, add it here rather than guessing.
+ */
+export const COUNTER_CLOCKWISE_SEATING_SITES = new Set(["BetACR", "ACR"]);
+
+/**
  * Map hand-history seat numbers to layout slots with hero anchored at slot 1
  * (bottom). Rotation is computed from real seat-number distance around the
  * table, not from index position within the (often gappy) list of currently
  * occupied seats — empty seats between two players must not compress their
  * visual spacing, or badges land on the wrong physical positions.
+ *
+ * `site` controls rotation direction (see COUNTER_CLOCKWISE_SEATING_SITES) —
+ * different poker clients number seats in opposite directions around the
+ * table, so the same offset formula mirrors badges to the wrong side if the
+ * site isn't accounted for.
  */
 
 export function buildHeroAnchoredSeatSlots(
@@ -119,6 +140,8 @@ export function buildHeroAnchoredSeatSlots(
   seatMap: Record<string, SeatMapEntry>,
 
   layoutKey: SeatLayoutKey,
+
+  site?: string | null,
 
 ): Record<number, number> {
 
@@ -150,16 +173,18 @@ export function buildHeroAnchoredSeatSlots(
 
   const ringSize = layoutSlots.length;
 
-
+  // seat - heroSeat matches poker_gui.py's original formula, which was fitted
+  // to BetACR (counter-clockwise seat numbering). Sites that number seats
+  // clockwise instead (confirmed live for CoinPoker) need the offset direction
+  // flipped, or every opponent lands mirrored to the wrong side of the table.
+  const counterClockwise = !site || COUNTER_CLOCKWISE_SEATING_SITES.has(site);
 
   const result: Record<number, number> = {};
 
   for (const seat of seatsSorted) {
 
-    // seat - heroSeat, matching poker_gui.py's original build_hero_anchored_seat_slots
-    // (verified against its actual formula, not guessed): on a fully-occupied
-    // table its index-rank-based offset reduces to exactly this direction.
-    const offset = ((seat - heroSeat) % ringSize + ringSize) % ringSize;
+    const rawOffset = counterClockwise ? seat - heroSeat : heroSeat - seat;
+    const offset = ((rawOffset % ringSize) + ringSize) % ringSize;
 
     result[seat] = layoutSlots[offset];
 

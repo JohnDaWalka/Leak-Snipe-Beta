@@ -1,0 +1,6 @@
+INFO:     Started server process [49892]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8001 (Press CTRL+C to quit)
+WARNING:root:Failed to validate request: Received request before initialization was complete
+WARNING:mcp.server.transport_security:Missing Content-Type header in POST request

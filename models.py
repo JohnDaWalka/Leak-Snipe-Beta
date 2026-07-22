@@ -885,6 +885,16 @@ class HandDatabase:
             finally:
                 conn.close()
 
+    def get_player_hand_count(self, name: str) -> int:
+        """Get actual count of hands played by a player in the database."""
+        with self.lock:
+            conn = self._connect()
+            try:
+                row = conn.execute("SELECT COUNT(*) FROM players WHERE name = ?", (name,)).fetchone()
+                return int(row[0]) if row else 0
+            finally:
+                conn.close()
+
     def get_all_player_types(self) -> List[Dict[str, Any]]:
         """Get all player types with statistics."""
         with self.lock:
@@ -902,6 +912,19 @@ class HandDatabase:
                         "effective_type": r[2] if r[2] else r[1],
                     })
                 return results
+            finally:
+                conn.close()
+
+    def get_all_manual_player_types(self) -> Dict[str, str]:
+        """Get all players who have a manually set player type."""
+        with self.lock:
+            conn = self._connect()
+            try:
+                rows = conn.execute(
+                    "SELECT name, manual_type FROM player_types "
+                    "WHERE manual_type IS NOT NULL AND manual_type != ''"
+                ).fetchall()
+                return {r[0]: r[1] for r in rows}
             finally:
                 conn.close()
 

@@ -22,8 +22,23 @@ from theory.cfr_solver import BUCKET_NAMES, run_cfr_for_game
 # ── Defaults (BetACR MTT) ─────────────────────────────────────────────────────
 
 CHART_DEPTHS: Tuple[int, ...] = (5, 10, 25, 35, 50, 75, 100)
-CHART_POSITIONS: Tuple[str, ...] = ("UTG", "MP", "CO", "BTN", "SB", "BB")
+# Full 9-max + common aliases (normalize_chart_position maps aliases → these).
+CHART_POSITIONS: Tuple[str, ...] = (
+    "UTG",
+    "UTG+1",
+    "UTG+2",
+    "MP",
+    "LJ",
+    "HJ",
+    "CO",
+    "BTN",
+    "SB",
+    "BB",
+)
 CHART_ACTIONS: Tuple[str, ...] = ("fold", "push", "open", "call", "defend", "3bet")
+
+# Early/mid seats that shove short; late seats already covered by SB/BTN/CO push path.
+EARLY_OPEN_POSITIONS = frozenset({"UTG", "UTG+1", "UTG+2", "MP", "LJ", "HJ"})
 
 DEFAULT_ANTE_PER_PLAYER = 500.0
 DEFAULT_NUM_PLAYERS = 9
@@ -40,6 +55,43 @@ DEEP_DEPTHS = frozenset({50, 75, 100})
 
 def list_chart_depths() -> List[int]:
     return list(CHART_DEPTHS)
+
+
+def list_chart_positions() -> List[str]:
+    return list(CHART_POSITIONS)
+
+
+def normalize_chart_position(position: str) -> str:
+    """Map hand-history / UI labels onto a CHART_POSITIONS key."""
+    raw = (position or "BTN").strip().upper().replace(" ", "")
+    aliases = {
+        "EP": "UTG",
+        "UTG1": "UTG+1",
+        "UTG+1": "UTG+1",
+        "UTG2": "UTG+2",
+        "UTG+2": "UTG+2",
+        "MIDDLE": "MP",
+        "MID": "MP",
+        "LOJACK": "LJ",
+        "LOJ": "LJ",
+        "HIJACK": "HJ",
+        "HIJ": "HJ",
+        "CUTOFF": "CO",
+        "BUTTON": "BTN",
+        "BU": "BTN",
+        "DEALER": "BTN",
+        "SMALLBLIND": "SB",
+        "BIGBLIND": "BB",
+    }
+    if raw in CHART_POSITIONS:
+        return raw
+    if raw in aliases:
+        return aliases[raw]
+    # Soft match e.g. "UTG+1 (6max)"
+    for key in CHART_POSITIONS:
+        if raw.startswith(key):
+            return key
+    return "BTN"
 
 
 def iter_hand_notations() -> List[str]:
@@ -240,7 +292,7 @@ def _cell_from_ranges(
             "bucket": bucket,
             "source": "cfr_plus",
         }
-    if stack_bb <= 10 and pos in ("SB", "BTN", "CO"):
+    if stack_bb <= 10 and pos in ("SB", "BTN", "CO", "HJ", "LJ"):
         role = "sb_shove" if pos == "SB" else "open_push"
         if role == "sb_shove":
             action, freq = _action_from_cfr(bucket, cfr, role="sb_shove")
@@ -248,6 +300,14 @@ def _cell_from_ranges(
             action, freq = _action_from_cfr(bucket, cfr, role="open_push")
             if in_open and action == "fold":
                 action, freq = "push", 0.85
+    elif stack_bb <= 10 and pos in EARLY_OPEN_POSITIONS:
+        # Early seats: push only premium open combos at ≤10bb
+        if in_open and bucket == "strong":
+            action, freq = "push", 0.9
+        elif in_open:
+            action, freq = "push", 0.55
+        else:
+            action, freq = "fold", 1.0
     elif pos == "BB" and stack_bb <= 35:
         action, freq = _action_from_cfr(bucket, cfr, role="bb_defend")
         if in_defend and action == "fold" and freq > 0.6:
@@ -292,7 +352,7 @@ def get_chart(
     CFR+ populates push/fold/call frequencies; open/defend/3-bet ranges scale by depth.
     """
     stack_bb = float(stack_bb)
-    position = (position or "BTN").strip().upper()
+    position = normalize_chart_position(position)
     if stack_bb not in CHART_DEPTHS:
         raise ValueError(f"stack_bb must be one of {list(CHART_DEPTHS)}")
     if position not in CHART_POSITIONS:
@@ -446,7 +506,7 @@ def build_coach_theory_block(
     ante = float(ante_info.get("ante_per_player") or DEFAULT_ANTE_PER_PLAYER)
     num_players = int(ante_info.get("num_players") or DEFAULT_NUM_PLAYERS)
     dead = float(ante_info.get("dead_money") or ante * num_players)
-    position = (meta.get("hero_position") or "BTN").upper()
+    position = normalize_chart_position(meta.get("hero_position") or "BTN")
     board = " ".join(meta.get("board_cards") or [])
 
     eff_stack = 25.0

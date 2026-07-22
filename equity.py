@@ -594,8 +594,10 @@ def range_frequency(spec: Union[str, Sequence]) -> float:
 # not a live solver. Used as the villain "Nash equilibrium" reference ranges.
 RFI_RANGES: Dict[str, str] = {
     "UTG": "22+, ATs+, KTs+, QTs+, JTs, T9s, AJo+, KQo",
-    "UTG+1": "22+, ATs+, KTs+, QTs+, JTs, T9s, AJo+, KQo",
+    "UTG+1": "22+, ATs+, KTs+, QTs+, JTs, T9s, 98s, AJo+, KQo",
+    "UTG+2": "22+, A9s+, KTs+, QTs+, JTs, T9s, 98s, AJo+, KQo, KJo",
     "MP": "22+, A9s+, KTs+, QTs+, J9s+, T9s, 98s, AJo+, KQo, KJo",
+    "LJ": "22+, A8s+, A5s, K9s+, Q9s+, J9s+, T8s+, 98s, 87s, ATo+, KJo+, QJo",
     "HJ": "22+, A7s+, A5s, K9s+, Q9s+, J9s+, T8s+, 98s, 87s, ATo+, KJo+, QJo",
     "CO": "22+, A2s+, K8s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s, 65s, ATo+, KTo+, QTo+, JTo",
     "BTN": (
@@ -606,6 +608,8 @@ RFI_RANGES: Dict[str, str] = {
         "22+, A2s+, K6s+, Q8s+, J8s+, T8s+, 97s+, 86s+, 76s, 65s, "
         "A2o+, K9o+, Q9o+, JTo"
     ),
+    # BB does not open RFI; charts use defend. Empty keeps BB open-combos empty.
+    "BB": "",
 }
 
 # Big blind defend (call) range vs a late-position steal — wide.
@@ -617,6 +621,13 @@ BB_DEFEND_VS_STEAL = (
 # Merged 3-bet ranges (approximation) by the position you're 3-betting from.
 THREE_BET_RANGES: Dict[str, str] = {
     "default": "TT+, AQs+, AKo, A5s, A4s, KJs+",
+    "UTG": "JJ+, AQs+, AKo",
+    "UTG+1": "JJ+, AQs+, AKo",
+    "UTG+2": "TT+, AQs+, AKo, A5s",
+    "MP": "TT+, AQs+, AKo, A5s, KQs",
+    "LJ": "TT+, AQs+, AKo, A5s, A4s, KJs+",
+    "HJ": "TT+, AQs+, AKo, A5s, A4s, KJs+",
+    "CO": "99+, AJs+, KQs, AQo+, A5s, A4s",
     "BTN": "99+, ATs+, KJs+, QJs, AQo+, A5s, A4s",
     "SB": "99+, AJs+, KQs, AQo+, A5s",
     "BB": "TT+, AJs+, KQs, AQo+, A5s, A4s",
@@ -625,6 +636,27 @@ THREE_BET_RANGES: Dict[str, str] = {
 # What "facing a steal" means by villain seat (their RFI).
 STEAL_POSITIONS = {"CO", "BTN", "SB"}
 
+_POSITION_ALIASES = {
+    "EP": "UTG",
+    "UTG1": "UTG+1",
+    "UTG2": "UTG+2",
+    "LOJACK": "LJ",
+    "LOJ": "LJ",
+    "HIJACK": "HJ",
+    "HIJ": "HJ",
+    "CUTOFF": "CO",
+    "BUTTON": "BTN",
+    "BU": "BTN",
+    "DEALER": "BTN",
+    "SMALLBLIND": "SB",
+    "BIGBLIND": "BB",
+}
+
+
+def _normalize_position_label(position: str) -> str:
+    pos = (position or "").strip().upper().replace(" ", "")
+    return _POSITION_ALIASES.get(pos, pos)
+
 
 def position_range(position: str, action: str = "open") -> str:
     """Return the reference range string for a position + action context.
@@ -632,12 +664,14 @@ def position_range(position: str, action: str = "open") -> str:
     action: 'open' / 'steal' / 'rfi' -> raise-first range; '3bet' -> 3-bet
     range; 'defend' -> BB call-vs-steal range.
     """
-    pos = (position or "").strip().upper()
+    pos = _normalize_position_label(position)
     act = (action or "open").strip().lower()
     if act in ("3bet", "3-bet", "threebet"):
         return THREE_BET_RANGES.get(pos, THREE_BET_RANGES["default"])
     if act == "defend":
         return BB_DEFEND_VS_STEAL
+    if pos == "BB":
+        return RFI_RANGES.get("BB", "")
     return RFI_RANGES.get(pos, RFI_RANGES["CO"])
 
 

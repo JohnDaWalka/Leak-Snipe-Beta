@@ -7,8 +7,8 @@ import requests
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "poker_hands.db")
-API_BASE = "https://leaksnipe-proxy.gitgoin87.workers.dev"
-STAGGER_DELAY = 1.0
+API_BASE = "https://worker.leaksnipe.win/mcp"
+STAGGER_DELAY = 0.05
 
 # How often to poll the DB file's mtime for changes (cheap stat() call, not a
 # query) — this is what makes sync react within ~1s of a hand completing
@@ -99,50 +99,130 @@ def mark_synced(db_path, hand_id, r2_key):
     conn.commit()
     conn.close()
 
-def upload_hand(hand_id, hand_data):
+def upload_hand(hand_id, hand_json, hand_dict):
     r2_key = f"hands/{hand_id}.json"
+    req_r2 = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "store_large_hand_history",
+            "arguments": {
+                "key": r2_key,
+                "data": hand_json
+            }
+        }
+    }
+    req_kv_hh1 = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "store_hand_history",
+            "arguments": {
+                "id": hand_id,
+                "data": hand_dict
+            }
+        }
+    }
+    req_kv_hh2 = {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "store_hand_history",
+            "arguments": {
+                "id": f"leaksnipe-hand-histories:{r2_key}",
+                "data": hand_dict
+            }
+        }
+    }
+    
+    players_list = [p["name"] for p in hand_dict.get("players", []) if p.get("name")]
+    meta = {
+        "source_key": r2_key,
+        "game_type": hand_dict.get("game_type"),
+        "stakes": hand_dict.get("buy_in") or hand_dict.get("table_name"),
+        "date": hand_dict.get("date"),
+        "players": players_list,
+        "site": hand_dict.get("site"),
+        "bucket": "leaksnipe-hand-histories"
+    }
+
+    req_kv_meta1 = {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {
+            "name": "upload_hand_history_meta",
+            "arguments": {
+                "id": hand_id,
+                **meta
+            }
+        }
+    }
+    req_kv_meta2 = {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/call",
+        "params": {
+            "name": "upload_hand_history_meta",
+            "arguments": {
+                "id": f"leaksnipe-hand-histories:{r2_key}",
+                **meta
+            }
+        }
+    }
+
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
-        res = requests.post(
-            f"{API_BASE}/hands",
-            json={"key": r2_key, "content": hand_data},
-            timeout=10
-        )
-        if res.status_code == 200:
-            print(f"  [OK] Uploaded: {r2_key}")
-            return r2_key
-        else:
-            print(f"  [FAIL] Failed: {r2_key} - {res.status_code}")
+        res = requests.post(API_BASE, json=req_r2, headers=headers, timeout=15)
+        if res.status_code != 200 or "error" in res.json():
+            err_msg = res.json().get("error", {}).get("message") if res.status_code == 200 else res.status_code
+            print(f"  [FAIL] R2 Failed: {r2_key} - {err_msg}")
             return None
+        
+        requests.post(API_BASE, json=req_kv_hh1, headers=headers, timeout=15)
+        requests.post(API_BASE, json=req_kv_hh2, headers=headers, timeout=15)
+        requests.post(API_BASE, json=req_kv_meta1, headers=headers, timeout=15)
+        requests.post(API_BASE, json=req_kv_meta2, headers=headers, timeout=15)
+
+        print(f"  [OK] Synced (R2+KV): {r2_key}")
+        return r2_key
     except Exception as e:
         print(f"  [ERROR] Error: {e}")
         return None
 
 def sync_pending(db_path, total_synced):
     """Sync whatever's currently pending. Returns the updated total_synced."""
-    hands = get_new_hands(db_path)
-    if not hands:
-        return total_synced
+    while True:
+        hands = get_new_hands(db_path)
+        if not hands:
+            break
 
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] {len(hands)} new hand(s)")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Syncing batch of {len(hands)} hand(s)...")
 
-    for hand in hands:
-        hand_id = hand["hand_id"]
-        hand_dict = dict(hand)
+        for hand in hands:
+            hand_id = hand["hand_id"]
+            hand_dict = dict(hand)
 
-        # Attach related data for full context
-        hand_dict["players"] = get_players_for_hand(db_path, hand_id)
-        hand_dict["actions"] = get_actions_for_hand(db_path, hand_id)
-        hand_dict["winners"] = get_winners_for_hand(db_path, hand_id)
+            # Attach related data for full context
+            hand_dict["players"] = get_players_for_hand(db_path, hand_id)
+            hand_dict["actions"] = get_actions_for_hand(db_path, hand_id)
+            hand_dict["winners"] = get_winners_for_hand(db_path, hand_id)
 
-        hand_json = json.dumps(hand_dict, indent=2, default=str)
+            hand_json = json.dumps(hand_dict, indent=2, default=str)
 
-        r2_key = upload_hand(hand_id, hand_json)
-        if r2_key:
-            mark_synced(db_path, hand_id, r2_key)
-            total_synced += 1
-        time.sleep(STAGGER_DELAY)
+            r2_key = upload_hand(hand_id, hand_json, hand_dict)
+            if r2_key:
+                mark_synced(db_path, hand_id, r2_key)
+                total_synced += 1
+            time.sleep(STAGGER_DELAY)
 
-    print(f"  Total synced: {total_synced}")
     return total_synced
 
 

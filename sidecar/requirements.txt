@@ -15,3 +15,6 @@ ddgs>=9.0.0
 
 # Theory tooling (CFR+ / value net) — lightweight numpy MLP; torch optional
 numpy>=1.24.0
+
+# Cloudflare R2 hand sync (sync_hands.py, repo root)
+requests>=2.31.0

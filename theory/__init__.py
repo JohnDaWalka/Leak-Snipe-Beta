@@ -6,6 +6,8 @@ from theory.charts import (
     build_coach_theory_block,
     get_chart,
     list_chart_depths,
+    list_chart_positions,
+    normalize_chart_position,
     validate_chart_vs_cfr,
 )
 from theory.cfr_solver import (
@@ -35,6 +37,8 @@ __all__ = [
     "encode_spot",
     "get_chart",
     "list_chart_depths",
+    "list_chart_positions",
+    "normalize_chart_position",
     "pot_odds_with_ante",
     "predict_value",
     "run_cfr_for_game",

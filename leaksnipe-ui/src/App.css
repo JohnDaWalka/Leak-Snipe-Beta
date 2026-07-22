@@ -1129,21 +1129,22 @@ tbody tr {
 .hud-badge-name {
   text-align: center;
   font-size: 0.72rem;
-  font-weight: 700;
-  color: #f8fafc;
+  font-weight: 800;
+  color: #ffffff;
   letter-spacing: 0.02em;
   margin-bottom: 0.2rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 1), 0 0 2px rgba(0, 0, 0, 1);
 }
 
 .hud-badge-card {
-  background: linear-gradient(180deg, rgba(26, 32, 48, 0.95), rgba(15, 20, 34, 0.98));
-  border: 1px solid rgba(100, 116, 139, 0.28);
+  background: linear-gradient(180deg, rgba(14, 18, 30, 0.98), rgba(8, 11, 20, 0.99));
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
   border-radius: 0.55rem;
   padding: 0.35rem 0.45rem 0.45rem;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.85), 0 0 0 1.5px rgba(255, 255, 255, 0.12);
 }
 
 .hud-badge-header {
@@ -1153,28 +1154,30 @@ tbody tr {
   gap: 0.35rem;
   margin-bottom: 0.35rem;
   padding-bottom: 0.25rem;
-  border-bottom: 1px solid rgba(100, 116, 139, 0.18);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 .hud-type-pill {
   font-size: 0.62rem;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  padding: 0.1rem 0.35rem;
+  padding: 0.15rem 0.4rem;
   border-radius: 0.25rem;
-  background: rgba(148, 163, 184, 0.12);
-  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.2);
+  color: #ffffff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
-.hud-type-pill.hud-type-tag { color: #4ade80; background: rgba(74, 222, 128, 0.12); }
-.hud-type-pill.hud-type-lag { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
+.hud-type-pill.hud-type-tag { color: #ffffff; background: #15803d; border: 1px solid #22c55e; }
+.hud-type-pill.hud-type-lag { color: #000000; background: #a16207; border: 1px solid #eab308; text-shadow: none; }
 .hud-type-pill.hud-type-fish,
 .hud-type-pill.hud-type-calling-station,
-.hud-type-pill.hud-type-maniac { color: #f87171; background: rgba(248, 113, 113, 0.12); }
+.hud-type-pill.hud-type-maniac { color: #ffffff; background: #b91c1c; border: 1px solid #ef4444; }
 .hud-type-pill.hud-type-nit,
-.hud-type-pill.hud-type-unknown { color: #94a3b8; background: rgba(148, 163, 184, 0.1); }
-.hud-type-pill.hud-type-regular { color: #e2e8f0; }
+.hud-type-pill.hud-type-unknown { color: #ffffff; background: #475569; border: 1px solid #64748b; }
+.hud-type-pill.hud-type-regular { color: #ffffff; background: #1d4ed8; border: 1px solid #3b82f6; }
 
 .hud-hands-count {
   font-size: 0.62rem;
@@ -1208,21 +1211,24 @@ tbody tr {
 
 .hud-stat-label {
   font-size: 0.58rem;
-  color: #64748b;
+  color: #94a3b8;
+  font-weight: 700;
   letter-spacing: 0.05em;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.8);
 }
 
 .hud-stat-value {
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 800;
   font-family: ui-monospace, monospace;
-  color: #e2e8f0;
+  color: #ffffff;
+  text-shadow: 0 1.5px 3px rgba(0, 0, 0, 1), -0.5px -0.5px 0 rgba(0, 0, 0, 0.7), 0.5px -0.5px 0 rgba(0, 0, 0, 0.7), -0.5px 0.5px 0 rgba(0, 0, 0, 0.7), 0.5px 0.5px 0 rgba(0, 0, 0, 0.7);
 }
 
-.hud-stat-value.tone-good { color: #4ade80; }
-.hud-stat-value.tone-warn { color: #fbbf24; }
-.hud-stat-value.tone-bad { color: #f87171; }
-.hud-stat-value.tone-neutral { color: #94a3b8; }
+.hud-stat-value.tone-good { color: #22c55e !important; }
+.hud-stat-value.tone-warn { color: #eab308 !important; }
+.hud-stat-value.tone-bad { color: #ef4444 !important; }
+.hud-stat-value.tone-neutral { color: #cbd5e1 !important; }
 
 .hud-tooltip {
   position: absolute;
@@ -1263,6 +1269,17 @@ tbody tr {
 .hud-tooltip th {
   color: #64748b;
   font-weight: 600;
+}
+
+.hud-tooltip.pinned {
+  border-color: rgba(234, 179, 8, 0.55);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(234, 179, 8, 0.25);
+}
+
+.hud-tooltip-empty {
+  font-size: 0.68rem;
+  color: #64748b;
+  padding: 0.2rem 0.1rem 0.05rem;
 }
 
 .hud-badge.skeleton .hud-badge-card {
@@ -1375,6 +1392,11 @@ tbody tr {
   position: relative;
   min-width: calc(150px * var(--hud-badge-scale, 1.5));
   max-width: calc(170px * var(--hud-badge-scale, 1.5));
+}
+
+.live-seat-badge.pinned .hud-badge-card {
+  outline: 1.5px solid rgba(234, 179, 8, 0.65);
+  outline-offset: 1px;
 }
 
 .live-seat-badge .hud-badge-name {

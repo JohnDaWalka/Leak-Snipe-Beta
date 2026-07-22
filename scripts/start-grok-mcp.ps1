@@ -1,101 +1,106 @@
-# Start LeakSnipe MCP + public tunnel for Grok chat connectors (grok.com).
+# Point Grok Build MCP at the permanent Cloudflare Worker (no ephemeral tunnels).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts\start-grok-mcp.ps1
+#
+# Preferred public MCP: https://leaksnipe.win/mcp  (Worker, always on)
+# Local desktop DB proxy (named tunnel, Windows service Cloudflared):
+#   https://db.leaksnipe.win  -> 127.0.0.1:8765 sidecar
+#
+# Do NOT register trycloudflare.com URLs into Grok — they die when cloudflared restarts.
 
 $ErrorActionPreference = "Stop"
+$StableMcpUrl = "https://leaksnipe.win/mcp"
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$VenvPython = Join-Path $RepoRoot ".venv\Scripts\python.exe"
-$ServerPy = Join-Path $RepoRoot "mcp_grok_server.py"
-$Cloudflared = "C:\Program Files (x86)\cloudflared\cloudflared.exe"
-$Port = 8001
 $LogDir = Join-Path $env:TEMP "leaksnipe-grok-mcp"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
-if (-not (Test-Path $VenvPython)) { throw "Missing: $VenvPython" }
-if (-not (Test-Path $ServerPy)) { throw "Missing: $ServerPy" }
-
-function Stop-Port([int]$p) {
-    Get-NetTCPConnection -State Listen -LocalPort $p -ErrorAction SilentlyContinue |
-        ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
-}
-
-Stop-Port $Port
-Get-Process cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name='ssh.exe'" -ErrorAction SilentlyContinue |
-    Where-Object { $_.CommandLine -match 'serveo|localhost.run' } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Seconds 1
-
-$env:LEAKSNIPE_ROOT = $RepoRoot
-$env:SQLITE_DB_PATH = (Join-Path $RepoRoot "poker_hands.db")
-$mcp = Start-Process -FilePath $VenvPython -ArgumentList @($ServerPy) `
-    -WorkingDirectory $RepoRoot -WindowStyle Hidden `
-    -RedirectStandardOutput (Join-Path $LogDir "mcp.out.log") `
-    -RedirectStandardError (Join-Path $LogDir "mcp.err.log") -PassThru
-
 $initPath = Join-Path $LogDir "init.json"
-[System.IO.File]::WriteAllText($initPath,
-    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Grok","version":"1"}}}')
+[System.IO.File]::WriteAllText(
+    $initPath,
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"Grok","version":"1"}}}'
+)
 
-$ready = $false
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Milliseconds 400
-    $code = & curl.exe -sS -o NUL -w "%{http_code}" --max-time 2 -X POST "http://127.0.0.1:$Port/mcp" `
-        -H "Content-Type: application/json" -H "Accept: application/json" --data-binary "@$initPath" 2>$null
-    if ($code -eq "200") { $ready = $true; break }
+Write-Host "Probing permanent Worker MCP: $StableMcpUrl"
+$code = & curl.exe -sS -o (Join-Path $LogDir "init-out.txt") -w "%{http_code}" --max-time 15 -X POST $StableMcpUrl `
+    -H "Content-Type: application/json" `
+    -H "Accept: application/json, text/event-stream" `
+    --data-binary "@$initPath" 2>$null
+
+if ($code -ne "200") {
+    throw "Worker MCP not healthy: $StableMcpUrl (HTTP $code). Check Cloudflare Worker deploy / custom domain."
 }
-if (-not $ready) { throw "Local MCP failed. See $($LogDir)\mcp.err.log" }
-Write-Host "Local MCP OK  http://127.0.0.1:$Port/mcp  (PID $($mcp.Id))"
 
-# Prefer Cloudflare quick tunnel
-if (-not (Test-Path $Cloudflared)) { throw "cloudflared missing: $Cloudflared" }
-$cfErr = Join-Path $LogDir "cloudflared.err.log"
-Remove-Item $cfErr -ErrorAction SilentlyContinue
-$cf = Start-Process -FilePath $Cloudflared -ArgumentList @(
-    "tunnel", "--url", "http://127.0.0.1:$Port", "--no-autoupdate", "--protocol", "http2"
-) -WindowStyle Hidden -RedirectStandardError $cfErr -PassThru
+$body = Get-Content (Join-Path $LogDir "init-out.txt") -Raw -ErrorAction SilentlyContinue
+Write-Host "Worker MCP OK (HTTP $code)"
+if ($body) { Write-Host ($body.Substring(0, [Math]::Min(200, $body.Length))) }
 
-$base = $null
-for ($i = 0; $i -lt 50; $i++) {
-    Start-Sleep -Milliseconds 400
-    if (Test-Path $cfErr) {
-        $m = Select-String -Path $cfErr -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -Last 1
-        if ($m -and $m.Line -match '(https://[a-z0-9-]+\.trycloudflare\.com)') {
-            $base = $Matches[1]
-            break
-        }
+Set-Content (Join-Path $LogDir "public-url.txt") $StableMcpUrl -Encoding utf8
+
+# Keep Grok Build config on the permanent URL (never trycloudflare)
+$GrokConfig = Join-Path $env:USERPROFILE ".grok\config.toml"
+if (Test-Path $GrokConfig) {
+    $toml = Get-Content $GrokConfig -Raw
+    $updated = $false
+    if ($toml -match '(?ms)(\[mcp_servers\.leak-snipe\]\s*\r?\nurl\s*=\s*")[^"]*(")') {
+        $toml = [regex]::Replace(
+            $toml,
+            '(?ms)(\[mcp_servers\.leak-snipe\]\s*\r?\nurl\s*=\s*")[^"]*(")',
+            "`${1}$StableMcpUrl`${2}"
+        )
+        $updated = $true
+    } elseif ($toml -notmatch '\[mcp_servers\.leak-snipe\]') {
+        $toml = $toml.TrimEnd() + "`n`n[mcp_servers.leak-snipe]`nurl = `"$StableMcpUrl`"`nenabled = true`n"
+        $updated = $true
+    }
+    if ($updated) {
+        Set-Content $GrokConfig $toml -Encoding utf8 -NoNewline
+        Write-Host "Updated $GrokConfig -> $StableMcpUrl"
+    } else {
+        Write-Host "Grok config already has leak-snipe entry (left as-is if already correct)."
     }
 }
-if (-not $base) { throw "No tunnel URL. See $cfErr" }
-
-$url = "$base/mcp"
-Set-Content (Join-Path $LogDir "public-url.txt") $url -Encoding utf8
-
-for ($i = 0; $i -lt 25; $i++) {
-    $code = & curl.exe -sS -o NUL -w "%{http_code}" --max-time 12 -X POST $url `
-        -H "Content-Type: application/json" -H "Accept: application/json" --data-binary "@$initPath" 2>$null
-    if ($code -eq "200") { break }
-    Start-Sleep -Seconds 2
-}
-if ($code -ne "200") { throw "Public URL not ready: $url (HTTP $code)" }
 
 if (Get-Command grok -ErrorAction SilentlyContinue) {
     try {
         & grok mcp remove leak-snipe 2>$null
-        & grok mcp add --transport http leak-snipe $url 2>$null
-    } catch {}
+        & grok mcp add --transport http leak-snipe $StableMcpUrl 2>$null
+        Write-Host "Registered via grok CLI: leak-snipe -> $StableMcpUrl"
+    } catch {
+        Write-Host "grok CLI register skipped: $_"
+    }
+}
+
+# Optional: verify named tunnel to local sidecar (not required for Worker MCP)
+Write-Host ""
+Write-Host "Checking named tunnel routes (desktop sidecar)..."
+foreach ($u in @("https://db.leaksnipe.win/health", "https://mcp.leaksnipe.win/health")) {
+    try {
+        $h = & curl.exe -sS -o NUL -w "%{http_code}" --max-time 8 $u 2>$null
+        Write-Host "  $u -> HTTP $h"
+    } catch {
+        Write-Host "  $u -> unreachable"
+    }
+}
+
+$svc = Get-Service Cloudflared -ErrorAction SilentlyContinue
+if ($svc) {
+    Write-Host "Cloudflared Windows service: $($svc.Status) ($($svc.StartType))"
+    if ($svc.Status -ne "Running") {
+        Write-Host "Starting Cloudflared service..."
+        try { Start-Service Cloudflared } catch { Write-Host "Could not start service (need admin?): $_" }
+    }
+} else {
+    Write-Host "Cloudflared Windows service not installed (Worker MCP still works without it)."
 }
 
 Write-Host ""
 Write-Host "============================================"
-Write-Host " PASTE THIS INTO GROK CONNECTORS:"
-Write-Host " $url"
+Write-Host " GROK MCP URL (permanent):"
+Write-Host " $StableMcpUrl"
 Write-Host "============================================"
 Write-Host ""
-Write-Host "1) Open https://grok.com/connectors"
-Write-Host "2) Remove any old LeakSnipe / custom MCP connector"
-Write-Host "3) New Connector -> Custom -> paste URL above (must end with /mcp)"
-Write-Host "4) New chat -> enable connector"
-Write-Host "5) Ask: list my poker databases and hands for Gboss101 and JohnDaWalka"
+Write-Host "If Grok Build still shows handshake failed:"
+Write-Host "  1) Restart Grok Build / start a new session"
+Write-Host "  2) Confirm .grok\config.toml has url = `"$StableMcpUrl`""
+Write-Host "  3) On grok.com connectors: remove old trycloudflare URL, paste the permanent one"
 Write-Host ""
-Write-Host "Keep this PC awake. Tunnel PID $($cf.Id)  MCP PID $($mcp.Id)"
 Write-Host "URL also in: $LogDir\public-url.txt"

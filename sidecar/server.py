@@ -653,6 +653,8 @@ def live_current_hand(
     hand = None
     site_filter = (site or "").strip()
     table_filter = (table or "").strip().lower()
+    if table_filter == "coinpoker":
+        table_filter = ""
     for h in hands:
         if site_filter and h.site.lower() != site_filter.lower():
             continue
@@ -663,6 +665,11 @@ def live_current_hand(
                 continue
         hand = h
         break
+    if hand is None and site_filter:
+        for h in hands:
+            if h.site.lower() == site_filter.lower():
+                hand = h
+                break
     if hand is None and hands:
         hand = hands[0]
 
@@ -758,12 +765,16 @@ def get_players_stats(
     if len(requested) > 20:
         raise HTTPException(status_code=400, detail="Maximum 20 players per request")
 
-    # Check if we have any uncached players in the request
+    # Check if we have any uncached or out-of-date players in the request
     uncached = []
     for name in requested:
         cached = db.get_player_type(name)
         if not cached or cached.get("hands", 0) <= 0:
             uncached.append(name)
+        else:
+            actual = db.get_player_hand_count(name)
+            if actual != cached.get("hands", 0):
+                uncached.append(name)
 
     hands = None
     all_stats = None
@@ -1486,6 +1497,14 @@ def theory_depths() -> Dict[str, Any]:
     from theory.charts import list_chart_depths
 
     return {"ok": True, "depths": list_chart_depths()}
+
+
+@app.get("/api/theory/positions")
+def theory_positions() -> Dict[str, Any]:
+    """All chart positions (full 9-max)."""
+    from theory.charts import list_chart_positions
+
+    return {"ok": True, "positions": list_chart_positions()}
 
 
 @app.get("/api/theory/charts")

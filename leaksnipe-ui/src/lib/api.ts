@@ -128,11 +128,34 @@ export type Dashboard = {
   wtsd: number;
   wsd: number;
   cbet: number;
-  by_position: Record<string, { total: number; vpip: number; pfr: number; net?: number; won?: number; lost?: number; chip_net?: number }>;
+  by_position: Record<
+    string,
+    {
+      total: number;
+      vpip: number;
+      pfr: number;
+      /** Cash-game net in dollars (won - lost). */
+      net?: number;
+      won?: number;
+      lost?: number;
+      /** Tournament chip EV / stack change (not dollars). */
+      chip_net?: number;
+    }
+  >;
   hands_by_site: Record<string, number>;
   by_site_stats: Record<
     string,
-    { total: number; vpip: number; pfr: number; net: number; won: number; lost: number }
+    {
+      total: number;
+      vpip: number;
+      pfr: number;
+      /** Cash-game net in dollars. */
+      net: number;
+      won: number;
+      lost: number;
+      /** Tournament chip net (not dollars). */
+      chip_net?: number;
+    }
   >;
   alerts: Alert[];
   db_path: string;

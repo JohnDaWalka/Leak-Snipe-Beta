@@ -13,7 +13,19 @@ import { RangeEditor } from "./RangeEditor";
 import { RangeTrainer } from "./RangeTrainer";
 
 const DEPTHS = [5, 10, 25, 35, 50, 75, 100] as const;
-const POSITIONS = ["UTG", "MP", "CO", "BTN", "SB", "BB"] as const;
+/** Full 9-max chart seats — keep in sync with theory.charts.CHART_POSITIONS */
+const DEFAULT_POSITIONS = [
+  "UTG",
+  "UTG+1",
+  "UTG+2",
+  "MP",
+  "LJ",
+  "HJ",
+  "CO",
+  "BTN",
+  "SB",
+  "BB",
+] as const;
 
 export function TheoryPanel() {
   const [theoryTab, setTheoryTab] = useState<"cfr" | "tough" | "editor" | "trainer">("cfr");
@@ -23,6 +35,7 @@ export function TheoryPanel() {
   const [refreshToggle, setRefreshToggle] = useState(false);
   const [games, setGames] = useState<TheoryGame[]>([]);
   const [depths, setDepths] = useState<number[]>([...DEPTHS]);
+  const [positions, setPositions] = useState<string[]>([...DEFAULT_POSITIONS]);
   const [stackBb, setStackBb] = useState<number>(25);
   const [position, setPosition] = useState<string>("BTN");
   const [antePerPlayer, setAntePerPlayer] = useState(500);
@@ -73,13 +86,25 @@ export function TheoryPanel() {
     void (async () => {
       try {
         await waitForBackend();
-        const [g, d] = await Promise.all([api.theoryGames(), api.theoryDepths()]);
+        const [g, d, overview] = await Promise.all([
+          api.theoryGames(),
+          api.theoryDepths(),
+          api.theoryOverview().catch(() => null),
+        ]);
         setGames(g.games);
         if (d.depths.length) setDepths(d.depths);
+        const apiPositions = overview?.chart_positions?.filter(Boolean);
+        if (apiPositions?.length) {
+          setPositions(apiPositions);
+          if (!apiPositions.includes(position)) {
+            setPosition(apiPositions.includes("BTN") ? "BTN" : apiPositions[0]);
+          }
+        }
       } catch {
         // optional
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once; position default only if API lacks it
   }, []);
 
   useEffect(() => {
@@ -112,7 +137,8 @@ export function TheoryPanel() {
     setError(null);
     try {
       await waitForBackend();
-      const posIdx = POSITIONS.indexOf(position as (typeof POSITIONS)[number]) / (POSITIONS.length - 1);
+      const posIdx =
+        Math.max(0, positions.indexOf(position)) / Math.max(1, positions.length - 1);
       setValueResult(
         await api.theoryValue({
           hero,
@@ -285,7 +311,7 @@ export function TheoryPanel() {
           depths={depths}
           stackBb={stackBb}
           position={position}
-          positions={POSITIONS}
+          positions={positions}
           onStackChange={setStackBb}
           onPositionChange={setPosition}
           onHandSelect={onHandSelect}

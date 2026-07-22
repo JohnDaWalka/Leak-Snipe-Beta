@@ -19,9 +19,16 @@ if %ERRORLEVEL% NEQ 0 (
 echo Stale Vite on port 1420 from a prior session is cleared automatically.
 echo.
 
+echo Starting LeakSnipe -^> Cloudflare hand sync...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-sync.ps1"
+echo.
+
 REM Double-click friendly: always invoke PowerShell explicitly
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\tauri-dev.ps1"
 set EXITCODE=%ERRORLEVEL%
+
+echo Stopping LeakSnipe -^> Cloudflare hand sync...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start-sync.ps1" -Stop
 
 if %EXITCODE% NEQ 0 (
   echo.

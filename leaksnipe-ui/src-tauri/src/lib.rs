@@ -1048,7 +1048,9 @@ pub fn run() {
                     })
                     .build(),
             )?;
-            app.global_shortcut().register(toggle_layout_shortcut)?;
+            if let Err(e) = app.global_shortcut().register(toggle_layout_shortcut) {
+                eprintln!("WARNING: Failed to register global hotkey Ctrl+Shift+H: {:?}", e);
+            }
             Ok(())
         })
         .manage(hud::HudController::new())

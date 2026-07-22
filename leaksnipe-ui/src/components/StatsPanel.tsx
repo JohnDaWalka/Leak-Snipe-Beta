@@ -1,4 +1,5 @@
 import type { Dashboard } from "../lib/api";
+import { formatChipsSigned } from "../lib/chipFormat";
 
 type StatsPanelProps = {
   dashboard: Dashboard | null;
@@ -15,6 +16,27 @@ function alertClass(level: string) {
 }
 
 const POSITION_ORDER = ["EP", "MP", "CO", "BTN", "SB", "BB"];
+
+/** Format cash $ and tournament chips without mixing units. */
+function formatNetCell(cashNet: number | undefined, chipNet: number | undefined): {
+  label: string;
+  tone: number;
+} {
+  const cash = cashNet ?? 0;
+  const chips = chipNet ?? 0;
+  const hasCash = Math.abs(cash) >= 0.005;
+  const hasChips = Math.abs(chips) >= 0.5;
+  if (hasCash && hasChips) {
+    return {
+      label: `${formatChipsSigned(cash, false)} cash · ${formatChipsSigned(chips, true)} chips`,
+      tone: Math.abs(chips) >= Math.abs(cash) ? chips : cash,
+    };
+  }
+  if (hasChips) {
+    return { label: `${formatChipsSigned(chips, true)} chips`, tone: chips };
+  }
+  return { label: formatChipsSigned(cash, false), tone: cash };
+}
 
 function StatsUnavailable({
   title,
@@ -159,18 +181,14 @@ export function StatsPanel({ dashboard, loading, warming, error, onRetry }: Stat
                 {POSITION_ORDER.map((pos) => {
                   const d = dashboard.by_position[pos];
                   if (!d) return null;
-                  const net = d.net ?? d.chip_net ?? 0;
-                  const isTournament = d.net == null && d.chip_net != null;
-                  const netLabel = isTournament
-                    ? `${net >= 0 ? "+" : ""}${Math.round(net).toLocaleString()} chips`
-                    : `${net >= 0 ? "+" : "-"}$${Math.abs(net).toFixed(2)}`;
+                  const { label, tone } = formatNetCell(d.net, d.chip_net);
                   return (
                     <tr key={pos}>
                       <td>{pos}</td>
                       <td>{d.total}</td>
                       <td>{d.vpip}%</td>
                       <td>{d.pfr}%</td>
-                      <td className={net >= 0 ? "positive" : "negative"}>{netLabel}</td>
+                      <td className={tone >= 0 ? "positive" : "negative"}>{label}</td>
                     </tr>
                   );
                 })}
@@ -193,18 +211,18 @@ export function StatsPanel({ dashboard, loading, warming, error, onRetry }: Stat
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(dashboard.by_site_stats).map(([site, d]) => (
-                  <tr key={site}>
-                    <td>{site}</td>
-                    <td>{d.total}</td>
-                    <td>{d.vpip}%</td>
-                    <td>{d.pfr}%</td>
-                    <td className={d.net >= 0 ? "positive" : "negative"}>
-                      {d.net >= 0 ? "+" : ""}
-                      {d.net.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
+                {Object.entries(dashboard.by_site_stats).map(([site, d]) => {
+                  const { label, tone } = formatNetCell(d.net, d.chip_net);
+                  return (
+                    <tr key={site}>
+                      <td>{site}</td>
+                      <td>{d.total}</td>
+                      <td>{d.vpip}%</td>
+                      <td>{d.pfr}%</td>
+                      <td className={tone >= 0 ? "positive" : "negative"}>{label}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -1,174 +1,114 @@
-// src/index.js – Full MCP implementation for hand‑history R2 bucket
-export default {
+// src/index.js – leaksnipe-proxy
+//
+// Was overwritten (outside this repo, 2026-07-18) with an "AI agent
+// discovery" wrapper that advertised fake OAuth endpoints and injected a
+// WebMCP script for tools that don't exist ("search leaked credentials",
+// "check a domain for breaches"). The unconditional `Link:` header it added
+// to every response — including proxied /mcp traffic — is what made MCP
+// clients think this server required OAuth and trigger a login flow that
+// had nowhere real to go. This version drops all of that: no OAuth/agent
+// metadata, no injected script, no Link header. robots.txt/sitemap.xml and
+// markdown content negotiation for the ORIGIN passthrough are kept since
+// they're harmless. (env.ORIGIN is not currently bound on this Worker, so
+// the passthrough branch is inert until/unless that's configured.)
+var originalHandler = {
   async fetch(request, env) {
     const url = new URL(request.url);
-    console.log('MCP fetch invoked', { method: request.method, pathname: url.pathname });
-    // R2 bucket endpoints for Antigravity integration
-    // -----------------------------------------------------------------
-    // New endpoint: /r2/all  – returns **all** hand‑history keys
-    // -----------------------------------------------------------------
-    if (url.pathname === "/r2/all") {
-      // R2 stores hands under the "hands/hands/" prefix
-      const prefix = "hands/hands/";
-      let cursor = null;
-      const allKeys = [];
+    const path = url.pathname;
+    const accept = request.headers.get("Accept") || "";
+    const wantsMarkdown = accept.includes("text/markdown");
 
-      do {
-        const opts = { prefix };
-        if (cursor) opts.cursor = cursor;
-        const resp = await env.POKER_R2.list(opts);
-        // Collect keys (strip the prefix for a cleaner list)
-        allKeys.push(...resp.objects.map(o => o.key.replace(prefix, "")));
-        cursor = resp.result_info?.cursor;
-      } while (cursor);
-
-      return new Response(JSON.stringify({ hands: allKeys }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
+    if (path === "/robots.txt") {
+      return new Response("User-agent: *\nAllow: /\n\nSitemap: https://leaksnipe.win/sitemap.xml\n", {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }
-    if (url.pathname.startsWith("/r2/get")) {
-      const id = url.searchParams.get("id");
-      if (!id) return new Response(JSON.stringify({ error: "Missing id" }), { status: 400, headers: { "Content-Type": "application/json" } });
-      const obj = await env.POKER_R2.get(`hands/hands/${id}`);
-      if (!obj) return new Response(JSON.stringify({ error: "Not found" }), { status: 404, headers: { "Content-Type": "application/json" } });
-      const txt = await obj.text();
-      return new Response(txt, { status: 200, headers: { "Content-Type": "text/plain" } });
-    }
-    // Serve robots.txt with explicit directives
-    if (url.pathname === "/robots.txt") {
-      const txt = `User-agent: *\nAllow: /\nDisallow: /private`;
-      return new Response(txt, { status: 200, headers: { "Content-Type": "text/plain" } });
-    }
-
-    // Serve robots.txt with explicit directives
-    if (url.pathname === "/robots.txt") {
-      const txt = `User-agent: *\nAllow: /\nDisallow: /private`;
-      return new Response(txt, { status: 200, headers: { "Content-Type": "text/plain" } });
-    }
-    // Markdown negotiation – if the client requests text/markdown, return a markdown version of the page
-    const acceptHeader = request.headers.get('Accept') || '';
-    if (acceptHeader.includes('text/markdown')) {
-      const md = `# Leaksnipe Proxy
-
-- This is a Cloudflare Worker serving the MCP API.
-- Use the **/mcp** endpoint for JSON‑RPC calls.
-- The **/robots.txt** file defines crawl rules.
-`;
-      return new Response(md, { status: 200, headers: { "Content-Type": "text/markdown" } });
-    }
-
-    // Expect JSON‑RPC POST requests
-    if (request.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Only POST allowed" }), {
-        status: 405,
-        headers: { "Content-Type": "application/json" },
+    if (path === "/sitemap.xml") {
+      const urls = ["https://leaksnipe.win/"];
+      const lastmod = new Date().toISOString().split("T")[0];
+      const entries = urls
+        .map((u) => "  <url>\n    <loc>" + u + "</loc>\n    <lastmod>" + lastmod + "</lastmod>\n  </url>")
+        .join("\n");
+      const xml =
+        '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+        entries +
+        "\n</urlset>";
+      return new Response(xml, {
+        headers: { "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" },
       });
     }
-    let body;
-    try {
-      body = await request.json();
-    } catch (e) {
-      console.error("Invalid JSON body", e);
-      return new Response(JSON.stringify({ error: "Invalid JSON" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
-    }
-
-        const { method, id, params } = body;
-    try {
-      // Support both legacy and newer method naming
-      if (method === "mcp.manifest" || method === "initialize" || method === "tools/list") {
-        return jsonResponse({ jsonrpc: "2.0", id, result: manifest() }, 200);
+    if (env.ORIGIN) {
+      const response = await env.ORIGIN.fetch(request);
+      const contentType = response.headers.get("Content-Type") || "";
+      if (wantsMarkdown && contentType.includes("text/html")) {
+        const html = await response.text();
+        return new Response(htmlToMarkdown(html), {
+          status: response.status,
+          headers: { "Content-Type": "text/markdown; charset=utf-8", "Cache-Control": "public, max-age=3600", Vary: "Accept" },
+        });
       }
-
-      if (method === "mcp.executeTool" || method === "tools/call") {
-        const toolName = params?.name || params?.tool;
-        const args = params?.arguments || params?.args || {};
-        const result = await executeTool(toolName, args, env);
-        // Wrap result for tools/call method
-        const wrapped = (method === "tools/call") ? { content: [{ type: "text", text: JSON.stringify(result) }] } : result;
-        return jsonResponse({ jsonrpc: "2.0", id, result: wrapped }, 200);
-      }
-
-      return jsonResponse({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }, 400);
-    } catch (e) {
-      console.error("MCP error", e);
-      return jsonResponse({ jsonrpc: "2.0", id, error: { code: -32603, message: e.message } }, 500);
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: new Headers(response.headers),
+      });
     }
+    return new Response("Not Found", { status: 404, headers: { "Content-Type": "text/plain" } });
   },
 };
 
-function jsonResponse(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+function htmlToMarkdown(html) {
+  const bt = "`";
+  const tb = bt + bt + bt;
+  let md = html.replace(/<script[\s\S]*?<\/script>/gi, "");
+  md = md.replace(/<style[\s\S]*?<\/style>/gi, "");
+  md = md.replace(/<!--[\s\S]*?-->/g, "");
+  md = md.replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n# $1\n");
+  md = md.replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n## $1\n");
+  md = md.replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n### $1\n");
+  md = md.replace(/<h4[^>]*>([\s\S]*?)<\/h4>/gi, "\n#### $1\n");
+  md = md.replace(/<h5[^>]*>([\s\S]*?)<\/h5>/gi, "\n##### $1\n");
+  md = md.replace(/<h6[^>]*>([\s\S]*?)<\/h6>/gi, "\n###### $1\n");
+  md = md.replace(/<a[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
+  md = md.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/\1>/gi, "**$2**");
+  md = md.replace(/<(em|i)[^>]*>([\s\S]*?)<\/\1>/gi, "*$2*");
+  md = md.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, "- $1\n");
+  md = md.replace(/<\/?(ul|ol)[^>]*>/gi, "\n");
+  md = md.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, "\n$1\n");
+  md = md.replace(/<br\s*\/?>/gi, "\n");
+  md = md.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, "\n" + tb + "\n$1\n" + tb + "\n");
+  md = md.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, bt + "$1" + bt);
+  md = md.replace(/<blockquote[^>]*>([\s\S]*?)<\/blockquote>/gi, "\n> $1\n");
+  md = md.replace(/<[^>]+>/g, "");
+  md = md.replace(/&amp;/g, "&");
+  md = md.replace(/&lt;/g, "<");
+  md = md.replace(/&gt;/g, ">");
+  md = md.replace(/&quot;/g, '"');
+  md = md.replace(/&#39;/g, "'");
+  md = md.replace(/&nbsp;/g, " ");
+  md = md.replace(/\n{3,}/g, "\n\n");
+  return md.trim();
 }
 
-function manifest() {
-  return {
-    tools: [
-      {
-        name: "list_hand_histories",
-        description: "List all poker hand history files",
-        parameters: { type: "object", properties: {} },
-      },
-      {
-        name: "get_hand_history",
-        description: "Get content of a specific hand history file",
-        parameters: {
-          type: "object",
-          properties: { file: { type: "string", description: "Hand file name (e.g., hand-123.json)" } },
-          required: ["file"],
-        },
-      },
-      {
-        name: "search_hand_histories",
-        description: "Search hand histories for a substring",
-        parameters: {
-          type: "object",
-          properties: { query: { type: "string", description: "Case‑insensitive substring to search for" } },
-          required: ["query"],
-        },
-      },
-    ],
-  };
-}
-
-async function executeTool(tool, args, env) {
-  const bucket = env.POKER_R2; // R2 binding
-  if (!bucket) throw new Error("POKER_R2 binding not configured");
-
-  const prefix = "hand-histories/";
-  switch (tool) {
-    case "list_hand_histories": {
-      const list = await bucket.list({ prefix });
-      const keys = list.objects.map(o => o.key.replace(prefix, ""));
-      return { jsonrpc: "2.0", result: keys };
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    const response = await originalHandler.fetch(request, env);
+    const contentType = response.headers.get("Content-Type") || "";
+    if (
+      contentType.includes("json") ||
+      contentType.includes("text") ||
+      contentType.includes("xml") ||
+      contentType.includes("markdown")
+    ) {
+      let bodyText = await response.text();
+      bodyText = bodyText.replaceAll("https://leaksnipe.win", url.origin);
+      return new Response(bodyText, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: new Headers(response.headers),
+      });
     }
-    case "get_hand_history": {
-      const key = prefix + (args?.file || "");
-      const obj = await bucket.get(key);
-      if (!obj) throw new Error(`File not found: ${args.file}`);
-      const content = await obj.text();
-      return { jsonrpc: "2.0", result: content };
-    }
-    case "search_hand_histories": {
-      const query = (args?.query || "").toLowerCase();
-      const list = await bucket.list({ prefix });
-      const matches = [];
-      for (const o of list.objects) {
-        const obj = await bucket.get(o.key);
-        const txt = await obj.text();
-        if (txt.toLowerCase().includes(query)) {
-          matches.push(o.key.replace(prefix, ""));
-        }
-      }
-      return { jsonrpc: "2.0", result: matches };
-    }
-    default:
-      throw new Error(`Unknown tool: ${tool}`);
-  }
-}
+    return response;
+  },
+};

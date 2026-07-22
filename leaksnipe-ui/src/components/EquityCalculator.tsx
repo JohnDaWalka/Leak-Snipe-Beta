@@ -18,7 +18,7 @@ const GAMES: { id: Game; label: string }[] = [
   { id: "stud8", label: "Stud Hi/Lo" },
 ];
 
-const POSITIONS = ["UTG", "MP", "HJ", "CO", "BTN", "SB", "BB"];
+const POSITIONS = ["UTG", "UTG+1", "UTG+2", "MP", "LJ", "HJ", "CO", "BTN", "SB", "BB"];
 const ACTIONS = [
   { id: "open", label: "Open / RFI" },
   { id: "steal", label: "Steal" },

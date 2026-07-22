@@ -86,16 +86,7 @@ class SQLiteConnection:
             self.conn.close()
 
 
-def serialize_hand(
-    hand: Hand,
-    settings: dict,
-    *,
-    format: str = "summary",
-    include_raw: bool = False,
-    include_actions: bool = False,
-    include_players: bool = False,
-) -> dict:
-    """Serialize a hand. Default format=summary omits raw_text / streets to save tokens."""
+def serialize_hand(hand: Hand, settings: dict) -> dict:
     hero_name = resolve_hand_hero_name(
         settings,
         hand.site,
@@ -104,9 +95,8 @@ def serialize_hand(
         hero_player=getattr(hand, "hero_player", ""),
     )
     date_str = hand.date.isoformat() if hand.date else None
-    full = format == "full" or include_raw
 
-    out: Dict[str, Any] = {
+    return {
         "hand_id": hand.hand_id,
         "site": hand.site,
         "date": date_str,
@@ -120,19 +110,16 @@ def serialize_hand(
         "hero_won": hand.hero_won,
         "hero_position": hand.hero_position,
         "hero_name": hero_name,
-    }
-    if include_players or full:
-        out["players"] = [
+        "players": [
             {
                 "seat": seat,
                 "name": p["name"],
                 "stack": p["stack"],
-                "is_hero": p.get("is_hero", False),
+                "is_hero": p.get("is_hero", False)
             }
             for seat, p in hand.players.items()
-        ]
-    if include_actions or full:
-        out["streets"] = [
+        ],
+        "streets": [
             {
                 "name": street.get("name", ""),
                 "cards": street.get("cards", []),
@@ -140,20 +127,23 @@ def serialize_hand(
                     {
                         "player": act.get("player", ""),
                         "action": act.get("action", ""),
-                        "amount": act.get("amount", 0.0),
+                        "amount": act.get("amount", 0.0)
                     }
                     for act in street.get("actions", [])
-                ],
+                ]
             }
             for street in getattr(hand, "streets", [])
-        ]
-        out["winners"] = [
-            {"name": w["name"], "amount": w["amount"]}
+        ],
+        "winners": [
+            {
+                "name": w["name"],
+                "amount": w["amount"]
+            }
             for w in getattr(hand, "winners", [])
-        ]
-    if include_raw or full:
-        out["raw_text"] = hand.raw_text
-    return out
+        ],
+        "raw_text": hand.raw_text
+    }
+
 
 def _safe_decode(b):
     if not b:
@@ -164,6 +154,7 @@ def _safe_decode(b):
         except UnicodeDecodeError:
             continue
     return b.decode('utf-8', errors='replace')
+
 
 def _exec_cmd(cmd_list, cwd=None):
     import subprocess
@@ -181,6 +172,7 @@ def _exec_cmd(cmd_list, cwd=None):
         "exit_code": res.returncode
     }
 
+
 def build_cards_sql(cards: str) -> tuple[str, list]:
     c = cards.strip().lower()
     if not c or len(c) < 2:
@@ -197,12 +189,13 @@ def build_cards_sql(cards: str) -> tuple[str, list]:
     else:
         return "(hero_cards LIKE ? OR hero_cards LIKE ?)", [p1, p2]
 
+
 def parse_natural_language_query(query: str) -> tuple[str, list, int]:
     import re
     query_lower = query.lower()
     where_clauses = []
     params = []
-    
+
     pos_map = {
         "utg": "UTG", "mp": "MP", "hj": "HJ", "co": "CO", "cutoff": "CO",
         "btn": "BTN", "button": "BTN", "sb": "SB", "small blind": "SB",
@@ -213,12 +206,12 @@ def parse_natural_language_query(query: str) -> tuple[str, list, int]:
             where_clauses.append("hero_position = ?")
             params.append(val)
             break
-            
+
     if "won" in query_lower or "winning" in query_lower or "profit" in query_lower:
         where_clauses.append("hero_won > 0")
     elif "lost" in query_lower or "losing" in query_lower or "loss" in query_lower:
         where_clauses.append("hero_won < 0")
-        
+
     if "3-bet" in query_lower or "3bet" in query_lower:
         where_clauses.append("(raw_text LIKE '%3-bet%' OR raw_text LIKE '%3bet%')")
     elif "4-bet" in query_lower or "4bet" in query_lower:
@@ -269,17 +262,8 @@ def parse_natural_language_query(query: str) -> tuple[str, list, int]:
         where_str = " WHERE " + " AND ".join(where_clauses)
     return where_str, params, limit
 
-def query_and_serialize_hands(
-    db,
-    settings,
-    sql,
-    params,
-    *,
-    format: str = "summary",
-    include_raw: bool = False,
-    include_actions: bool = False,
-    include_players: bool = False,
-):
+
+def query_and_serialize_hands(db, settings, sql, params):
     with db.lock:
         conn = db._connect()
         try:
@@ -298,39 +282,9 @@ def query_and_serialize_hands(
                 )
                 for row in rows
             ]
-            return [
-                serialize_hand(
-                    h,
-                    settings,
-                    format=format,
-                    include_raw=include_raw,
-                    include_actions=include_actions,
-                    include_players=include_players,
-                )
-                for h in hands
-            ]
+            return [serialize_hand(h, settings) for h in hands]
         finally:
             conn.close()
-
-
-def _ok_list(results, *, limit=None, offset=0, has_more=False, **extra):
-    return {
-        "success": True,
-        "count": len(results) if results is not None else 0,
-        "results": results or [],
-        "limit": limit,
-        "offset": offset,
-        "has_more": has_more,
-        **extra,
-    }
-
-
-def _clamp_limit(limit: Optional[int], default: int = 10, max_limit: int = 100) -> int:
-    try:
-        n = int(limit) if limit is not None else default
-    except (TypeError, ValueError):
-        n = default
-    return max(1, min(n, max_limit))
 
 
 def _assert_select(query: str) -> str:
@@ -469,6 +423,20 @@ def database_overview(database: Optional[str] = None) -> Dict[str, Any]:
                     info["hands_by_site"] = {r["site"]: r["c"] for r in sites}
                 except sqlite3.Error:
                     pass
+                try:
+                    units = conn.execute(
+                        """
+                        SELECT is_tournament, site, COUNT(*) AS hands,
+                               ROUND(SUM(hero_won), 2) AS net
+                        FROM hands GROUP BY is_tournament, site
+                        """
+                    ).fetchall()
+                    info["unit_split"] = [dict(r) for r in units]
+                    info["unit_note"] = (
+                        "is_tournament=0 net is USD; is_tournament=1 net is tournament chips — never mix"
+                    )
+                except sqlite3.Error:
+                    pass
             if "players" in tables:
                 try:
                     info["distinct_players"] = conn.execute(
@@ -481,137 +449,213 @@ def database_overview(database: Optional[str] = None) -> Dict[str, Any]:
 
 
 @mcp.tool()
+def list_full_schemas() -> Dict[str, Any]:
+    """List every available database, table, and column for deep MCP coaching.
+
+    Includes unit rules: cash hands use dollars; tournament hands use chips.
+    Heroes: Gboss101 / jdwalka (JohnDaWalka) aliases.
+    """
+    out: Dict[str, Any] = {
+        "heroes": {
+            "Gboss101": ["Gboss101", "GBOSS101", "gboss101"],
+            "jdwalka": ["jdwalka", "JohnDaWalka", "Johndawalka"],
+        },
+        "units": {
+            "cash": "hero_won/pot are USD when hands.is_tournament = 0",
+            "tournament": "hero_won/pot are chips when hands.is_tournament = 1",
+        },
+        "databases": {},
+    }
+    for name, path in _discover_databases().items():
+        tables: Dict[str, Any] = {}
+        with SQLiteConnection(path) as conn:
+            for (tname,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+                "AND name NOT LIKE '%backup%' ORDER BY name"
+            ):
+                cols = [
+                    {"name": r["name"], "type": r["type"], "pk": r["pk"]}
+                    for r in conn.execute(f'PRAGMA table_info("{tname}")')
+                ]
+                try:
+                    n = conn.execute(f'SELECT COUNT(*) AS c FROM "{tname}"').fetchone()["c"]
+                except sqlite3.Error:
+                    n = None
+                tables[tname] = {"columns": cols, "row_count": n}
+        out["databases"][name] = {"path": str(path), "tables": tables}
+    return out
+
+
+@mcp.tool()
+def hero_overview(hero: Optional[str] = None) -> Dict[str, Any]:
+    """Hero coaching snapshot with cash $ and tournament chips SEPARATED by site.
+
+    Args:
+        hero: 'gboss101', 'jdwalka', or empty for all tracked heroes.
+    """
+    hero_key = (hero or "").strip().lower()
+    clauses = ["p.is_hero = 1"]
+    params: List[Any] = []
+    if "gboss" in hero_key:
+        clauses.append("lower(p.name) LIKE '%gboss101%'")
+    elif "jdwalk" in hero_key or "johnda" in hero_key:
+        clauses.append(
+            "(lower(p.name) LIKE '%jdwalka%' OR lower(p.name) LIKE '%johndawalka%')"
+        )
+    elif hero_key:
+        clauses.append("lower(p.name) = lower(?)")
+        params.append(hero_key)
+
+    where = " AND ".join(clauses)
+    sql = f"""
+        SELECT
+          CASE WHEN h.is_tournament = 1 THEN 'tournament_chips' ELSE 'cash_usd' END AS unit,
+          h.site,
+          COUNT(*) AS hands,
+          ROUND(SUM(h.hero_won), 2) AS net,
+          ROUND(AVG(h.hero_won), 2) AS avg_result,
+          MIN(h.date) AS first_hand,
+          MAX(h.date) AS last_hand
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND {where}
+        GROUP BY unit, h.site
+        ORDER BY unit, hands DESC
+    """
+    with SQLiteConnection(_resolve_db("poker_hands")) as conn:
+        rows = [dict(r) for r in conn.execute(sql, params)]
+    return {
+        "hero": hero_key or "all",
+        "note": "Never add cash_usd net to tournament_chips net",
+        "breakdown": rows,
+    }
+
+
+@mcp.tool()
+def list_ai_analyses(limit: int = 20, has_mistakes: bool = False) -> List[Dict[str, Any]]:
+    """List stored AI coach analyses from ai_analysis for leak review."""
+    limit = max(1, min(int(limit), 100))
+    sql = (
+        "SELECT hand_id, llm_provider, play_style, mistakes_found, tags, summary, "
+        "ev_estimate, analyzed_at FROM ai_analysis"
+    )
+    if has_mistakes:
+        sql += " WHERE COALESCE(mistakes_found, 0) > 0"
+    sql += " ORDER BY analyzed_at DESC LIMIT ?"
+    with SQLiteConnection(_resolve_db("poker_hands")) as conn:
+        return [dict(r) for r in conn.execute(sql, [limit])]
+
+
+@mcp.tool()
+def list_coach_memory(hero: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+    """Read coach_memory dialogue history for cross-session coaching context."""
+    limit = max(1, min(int(limit), 100))
+    sql = (
+        "SELECT id, hero, kind, user_text, assistant_text, provider, created_at "
+        "FROM coach_memory"
+    )
+    params: List[Any] = []
+    if hero:
+        sql += " WHERE lower(hero) LIKE lower(?)"
+        params.append(f"%{hero}%")
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    with SQLiteConnection(_resolve_db("coach_memory")) as conn:
+        return [dict(r) for r in conn.execute(sql, params)]
+
+
+@mcp.tool()
 def get_recent_hands(
     limit: int = 10,
     since: Optional[str] = None,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    """Returns the most recent hands (summary by default — no raw_text).
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns the most recent hands played by the user.
 
     Args:
-        limit: Max hands to return (default 10, max 100).
+        limit: Max hands to return (default 10).
         since: ISO timestamp YYYY-MM-DD to get hands after.
         database: Optional database name (default: poker_hands).
-        format: 'summary' (default) or 'full'.
-        include_raw: Include raw_text even in summary mode.
-        offset: Pagination offset.
     """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    limit = _clamp_limit(limit)
     where_clauses = []
-    sql_params: List[Any] = []
+    sql_params = []
     if since:
         where_clauses.append("date >= ?")
         sql_params.append(since)
-    where_str = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
-    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db,
-        settings,
-        sql,
-        sql_params + [limit + 1, offset],
-        format=format,
-        include_raw=include_raw,
-    )
-    has_more = len(hands) > limit
-    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
+    where_str = ""
+    if where_clauses:
+        where_str = " WHERE " + " AND ".join(where_clauses)
+    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, sql_params + [limit])
 
 
 @mcp.tool()
 def get_hands_by_cards(
     cards: str,
     limit: int = 10,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    """Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s'). Summary by default."""
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns hands containing specific hole cards (e.g. 'QQ', 'AKs', '76s').
+
+    Args:
+        cards: Card string like 'QQ', 'AK', '76s'.
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    limit = _clamp_limit(limit)
     cards_sql, cards_params = build_cards_sql(cards)
     if not cards_sql:
         raise ValueError("Invalid cards specified")
-    sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db, settings, sql, cards_params + [limit + 1, offset],
-        format=format, include_raw=include_raw,
-    )
-    has_more = len(hands) > limit
-    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
+    sql = f"SELECT * FROM hands WHERE {cards_sql} ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, cards_params + [limit])
 
 
 @mcp.tool()
 def get_biggest_winning_hands(
     limit: int = 10,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    """Biggest winning hands by profit (chip units). Summary by default."""
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns the biggest winning hands by profit.
+
+    Args:
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    limit = _clamp_limit(limit)
-    sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db, settings, sql, [limit + 1, offset], format=format, include_raw=include_raw,
-    )
-    has_more = len(hands) > limit
-    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
+    sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, [limit])
 
 
 @mcp.tool()
 def get_winrate_by_position(
-    database: Optional[str] = None,
-    site: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    is_tournament: Optional[bool] = None,
-) -> Dict[str, Any]:
-    """Winrate / profit by position. Profit may be tournament chips, not USD."""
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns winrate statistics broken down by position.
+
+    Args:
+        database: Optional database name (default: poker_hands).
+    """
     db = HandDatabase(str(_resolve_db(database)))
-    where = ["hero_position IS NOT NULL", "hero_position != '?'", "hero_position != ''"]
-    params: List[Any] = []
-    if site:
-        where.append("LOWER(site) = LOWER(?)")
-        params.append(site)
-    if date_from:
-        where.append("date >= ?")
-        params.append(date_from)
-    if date_to:
-        where.append("date <= ?")
-        params.append(date_to)
-    if is_tournament is True:
-        where.append("is_tournament = 1")
-    elif is_tournament is False:
-        where.append("is_tournament = 0")
-    sql = f"""
+    sql = """
         SELECT
-            hero_position AS position,
-            COUNT(*) AS total_hands,
-            SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) AS hands_won,
-            SUM(hero_won) AS total_profit
+            hero_position,
+            COUNT(*) as hands_played,
+            SUM(hero_won) as net_profit,
+            SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate
         FROM hands
-        WHERE {' AND '.join(where)}
+        WHERE hero_position IS NOT NULL AND hero_position != '?'
         GROUP BY hero_position
-        ORDER BY total_profit DESC
+        ORDER BY net_profit DESC
     """
     with db.lock:
         conn = db._connect()
         try:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(sql, params).fetchall()
-            results = [dict(r) for r in rows]
-            return _ok_list(
-                results,
-                note="total_profit is in site/tournament chip units, not always USD.",
-            )
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 
@@ -620,22 +664,19 @@ def get_winrate_by_position(
 def get_hands_by_position(
     position: str,
     limit: int = 10,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    """Hands from a hero position. Summary by default."""
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Returns hands played from a specific position.
+
+    Args:
+        position: Position like 'UTG', 'MP', 'HJ', 'CO', 'BTN', 'SB', 'BB'.
+        limit: Max hands to return (default 10).
+        database: Optional database name (default: poker_hands).
+    """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    limit = _clamp_limit(limit)
-    sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db, settings, sql, [position.upper(), limit + 1, offset],
-        format=format, include_raw=include_raw,
-    )
-    has_more = len(hands) > limit
-    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
+    sql = "SELECT * FROM hands WHERE UPPER(hero_position) = ? ORDER BY date DESC LIMIT ?"
+    return query_and_serialize_hands(db, settings, sql, [position.upper(), limit])
 
 
 @mcp.tool()
@@ -643,219 +684,22 @@ def search_hands(
     query: str,
     limit: Optional[int] = None,
     offset: int = 0,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-) -> Dict[str, Any]:
-    """Natural language search (e.g. 'BTN won QQ'). Summary by default."""
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Natural language search across hands (e.g. 'my last 3-bet pot from cutoff').
+
+    Args:
+        query: Natural language search query.
+        limit: Optional limit to override query limit.
+        offset: Pagination offset.
+        database: Optional database name (default: poker_hands).
+    """
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
     where_str, sql_params, parsed_limit = parse_natural_language_query(query)
-    lim = _clamp_limit(limit if limit is not None else parsed_limit)
+    lim = limit if limit is not None else parsed_limit
     sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db, settings, sql, sql_params + [lim + 1, offset],
-        format=format, include_raw=include_raw,
-    )
-    has_more = len(hands) > lim
-    return _ok_list(hands[:lim], limit=lim, offset=offset, has_more=has_more)
-
-
-@mcp.tool()
-def get_hand(
-    hand_id: str,
-    database: Optional[str] = None,
-    format: str = "summary",
-    include_raw: bool = False,
-    include_actions: bool = False,
-    include_players: bool = False,
-    include_tags: bool = False,
-) -> Dict[str, Any]:
-    """Get a single hand by id with optional includes."""
-    settings = load_settings()
-    db = HandDatabase(str(_resolve_db(database)))
-    hands = query_and_serialize_hands(
-        db,
-        settings,
-        "SELECT * FROM hands WHERE hand_id = ? LIMIT 1",
-        [hand_id],
-        format=format,
-        include_raw=include_raw,
-        include_actions=include_actions,
-        include_players=include_players,
-    )
-    if not hands:
-        return {"success": True, "found": False, "result": None}
-    result = hands[0]
-    if include_tags:
-        with db.lock:
-            conn = db._connect()
-            try:
-                tags = conn.execute(
-                    "SELECT tag FROM hand_tags WHERE hand_id = ? ORDER BY tag",
-                    [hand_id],
-                ).fetchall()
-                result["tags"] = [t[0] if not isinstance(t, sqlite3.Row) else t["tag"] for t in tags]
-            finally:
-                conn.close()
-    return {"success": True, "found": True, "result": result}
-
-
-@mcp.tool()
-def list_tags(
-    database: Optional[str] = None,
-    limit: int = 100,
-    prefix: Optional[str] = None,
-) -> Dict[str, Any]:
-    """List distinct hand tags with counts."""
-    db_path = _resolve_db(database)
-    limit = _clamp_limit(limit, 100)
-    with SQLiteConnection(db_path) as conn:
-        params: List[Any] = []
-        sql = "SELECT tag, COUNT(*) AS hand_count FROM hand_tags"
-        if prefix:
-            sql += " WHERE LOWER(tag) LIKE ?"
-            params.append(prefix.lower() + "%")
-        sql += " GROUP BY tag ORDER BY hand_count DESC LIMIT ?"
-        params.append(limit)
-        try:
-            rows = conn.execute(sql, params).fetchall()
-        except sqlite3.Error:
-            return _ok_list([])
-        return _ok_list([dict(r) for r in rows], limit=limit)
-
-
-@mcp.tool()
-def list_leaks(
-    database: Optional[str] = None,
-    min_mistakes: int = 1,
-    limit: int = 20,
-    offset: int = 0,
-    include_raw_response: bool = False,
-) -> Dict[str, Any]:
-    """Search ai_analysis rows for coaching leaks."""
-    db_path = _resolve_db(database)
-    limit = _clamp_limit(limit, 20)
-    cols = (
-        "*"
-        if include_raw_response
-        else "hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at"
-    )
-    with SQLiteConnection(db_path) as conn:
-        try:
-            rows = conn.execute(
-                f"SELECT {cols} FROM ai_analysis WHERE mistakes_found >= ? "
-                "ORDER BY analyzed_at DESC LIMIT ? OFFSET ?",
-                [min_mistakes, limit + 1, offset],
-            ).fetchall()
-        except sqlite3.Error:
-            return _ok_list([])
-        results = [dict(r) for r in rows]
-        has_more = len(results) > limit
-        return _ok_list(results[:limit], limit=limit, offset=offset, has_more=has_more)
-
-
-@mcp.tool()
-def list_tournaments(
-    database: Optional[str] = None,
-    site: Optional[str] = None,
-    limit: int = 20,
-    offset: int = 0,
-) -> Dict[str, Any]:
-    """List tournament_summaries."""
-    db_path = _resolve_db(database)
-    limit = _clamp_limit(limit, 20)
-    where = []
-    params: List[Any] = []
-    if site:
-        where.append("LOWER(site) = LOWER(?)")
-        params.append(site)
-    sql = (
-        "SELECT tournament_id, site, buy_in_raw, buy_in_value, rake_value, "
-        "player_count, finish_position, prize, hero_name, imported_at "
-        "FROM tournament_summaries"
-    )
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY imported_at DESC LIMIT ? OFFSET ?"
-    params.extend([limit + 1, offset])
-    with SQLiteConnection(db_path) as conn:
-        try:
-            rows = conn.execute(sql, params).fetchall()
-        except sqlite3.Error:
-            return _ok_list([])
-        results = [dict(r) for r in rows]
-        has_more = len(results) > limit
-        return _ok_list(results[:limit], limit=limit, offset=offset, has_more=has_more)
-
-
-@mcp.tool()
-def query_hands(
-    site: Optional[str] = None,
-    game_type: Optional[str] = None,
-    is_tournament: Optional[bool] = None,
-    position: Optional[str] = None,
-    hero_cards: Optional[str] = None,
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    won: Optional[bool] = None,
-    min_profit: Optional[float] = None,
-    max_profit: Optional[float] = None,
-    limit: int = 10,
-    offset: int = 0,
-    format: str = "summary",
-    include_raw: bool = False,
-    database: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Unified hand query with shared filters. Summary by default."""
-    settings = load_settings()
-    db = HandDatabase(str(_resolve_db(database)))
-    limit = _clamp_limit(limit)
-    where: List[str] = []
-    params: List[Any] = []
-    if site:
-        where.append("LOWER(site) = LOWER(?)")
-        params.append(site)
-    if game_type:
-        where.append("UPPER(game_type) = UPPER(?)")
-        params.append(game_type)
-    if is_tournament is True:
-        where.append("is_tournament = 1")
-    elif is_tournament is False:
-        where.append("is_tournament = 0")
-    if position:
-        where.append("UPPER(hero_position) = UPPER(?)")
-        params.append(position)
-    if hero_cards:
-        cards_sql, cards_params = build_cards_sql(hero_cards)
-        if not cards_sql:
-            raise ValueError("Invalid hero_cards")
-        where.append(f"({cards_sql})")
-        params.extend(cards_params)
-    if date_from:
-        where.append("date >= ?")
-        params.append(date_from)
-    if date_to:
-        where.append("date <= ?")
-        params.append(date_to)
-    if won is True:
-        where.append("hero_won > 0")
-    elif won is False:
-        where.append("hero_won < 0")
-    if min_profit is not None:
-        where.append("hero_won >= ?")
-        params.append(min_profit)
-    if max_profit is not None:
-        where.append("hero_won <= ?")
-        params.append(max_profit)
-    where_str = (" WHERE " + " AND ".join(where)) if where else ""
-    sql = f"SELECT * FROM hands{where_str} ORDER BY date DESC LIMIT ? OFFSET ?"
-    hands = query_and_serialize_hands(
-        db, settings, sql, params + [limit + 1, offset],
-        format=format, include_raw=include_raw,
-    )
-    has_more = len(hands) > limit
-    return _ok_list(hands[:limit], limit=limit, offset=offset, has_more=has_more)
+    return query_and_serialize_hands(db, settings, sql, sql_params + [lim, offset])
 
 
 @mcp.tool()
@@ -865,270 +709,464 @@ def get_sessions_winrate(
     limit: int = 10,
     database: Optional[str] = None
 ) -> List[Dict[str, Any]]:
-    """Calculate poker sessions dynamically based on gap minutes and return session winrate, profit, and duration.
+    """Returns winrate statistics for playing sessions.
 
     Args:
-        site: Filter by site (e.g. 'CoinPoker', 'BetACR').
-        gap_minutes: Minutes gap between hands to define a new session (default 30).
+        site: Filter by poker site (e.g. 'CoinPoker', 'BetACR').
+        gap_minutes: Minutes of inactivity to define session boundary (default 30).
         limit: Max sessions to return (default 10).
         database: Optional database name (default: poker_hands).
     """
-    from collections import defaultdict
-    from datetime import datetime
     settings = load_settings()
     db = HandDatabase(str(_resolve_db(database)))
-    
-    sql = "SELECT hand_id, date, site, hero_won, is_tournament, hero_position FROM hands"
-    params = []
     where_clauses = []
+    params = []
     if site:
-        where_clauses.append("site = ?")
+        where_clauses.append("h.site = ?")
         params.append(site)
-    if where_clauses:
-        sql += " WHERE " + " AND ".join(where_clauses)
-    sql += " ORDER BY date ASC"
-    
+    where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
+    sql = f"""
+        WITH session_hands AS (
+            SELECT
+                h.*,
+                SUM(CASE WHEN
+                    julianday(h.date) - julianday(LAG(h.date) OVER (ORDER BY h.date)) * 24 * 60 > ?
+                    OR LAG(h.date) OVER (ORDER BY h.date) IS NULL
+                THEN 1 ELSE 0 END) OVER (ORDER BY h.date) AS session_id
+            FROM hands h
+            WHERE {where_clause}
+        ),
+        session_stats AS (
+            SELECT
+                session_id,
+                COUNT(*) AS hands,
+                SUM(hero_won) AS net_result,
+                AVG(hero_won) AS avg_result,
+                MIN(date) AS session_start,
+                MAX(date) AS session_end
+            FROM session_hands
+            GROUP BY session_id
+        )
+        SELECT
+            session_id,
+            hands,
+            ROUND(net_result, 2) AS net_result,
+            ROUND(avg_result, 2) AS avg_result,
+            session_start,
+            session_end
+        FROM session_stats
+        ORDER BY net_result DESC
+        LIMIT ?
+    """
+    params.extend([gap_minutes, limit])
     with db.lock:
         conn = db._connect()
         try:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
-            
-    if not rows:
-        return []
-        
-    hands_by_site = defaultdict(list)
-    for r in rows:
-        hands_by_site[r["site"]].append(r)
-        
-    sessions = []
-    gap_seconds = gap_minutes * 60
-    
-    for current_site, site_hands in hands_by_site.items():
-        if not site_hands:
-            continue
-            
-        current_session = []
-        last_time = None
-        
-        for h in site_hands:
-            h_date_str = h["date"]
-            if not h_date_str:
-                continue
-            try:
-                h_date = datetime.fromisoformat(h_date_str)
-            except Exception:
-                continue
-                
-            if last_time is not None:
-                diff = (h_date - last_time).total_seconds()
-                if diff > gap_seconds:
-                    sessions.append((current_site, current_session))
-                    current_session = []
-            
-            current_session.append({
-                "hand_id": h["hand_id"],
-                "date": h_date,
-                "hero_won": h["hero_won"] or 0.0,
-                "is_tournament": bool(h["is_tournament"]),
-                "position": h["hero_position"]
-            })
-            last_time = h_date
-            
-        if current_session:
-            sessions.append((current_site, current_session))
-            
-    summary_sessions = []
-    for idx, (sess_site, sess) in enumerate(sessions):
-        if not sess:
-            continue
-        first_hand = sess[0]
-        last_hand = sess[-1]
-        
-        hand_count = len(sess)
-        total_won = sum(h["hero_won"] for h in sess)
-        won_hands = sum(1 for h in sess if h["hero_won"] > 0)
-        lost_hands = sum(1 for h in sess if h["hero_won"] < 0)
-        
-        duration = (last_hand["date"] - first_hand["date"]).total_seconds()
-        duration_minutes = round(duration / 60, 1)
-        
-        winrate_pct = round((won_hands / hand_count) * 100, 1) if hand_count > 0 else 0.0
-        
-        summary_sessions.append({
-            "session_index": idx + 1,
-            "site": sess_site,
-            "start_time": first_hand["date"].isoformat(),
-            "end_time": last_hand["date"].isoformat(),
-            "hand_count": hand_count,
-            "net_profit": round(total_won, 2),
-            "won_hands": won_hands,
-            "lost_hands": lost_hands,
-            "winrate_pct": winrate_pct,
-            "duration_minutes": duration_minutes,
-            "hands_per_hour": round(hand_count / (duration / 3600), 1) if duration > 60 else hand_count
-        })
-        
-    summary_sessions.sort(key=lambda s: s["start_time"], reverse=True)
-    return summary_sessions[:limit]
+
+
+# ===== NEW MCP QUERIES FOR LEAK SNIPE ENHANCEMENT =====
+
+@mcp.tool()
+def get_hero_vpip_pfr_by_position(
+    hero_name: str,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get hero's VPIP and PFR percentages by position.
+
+    Args:
+        hero_name: Hero player name to analyze (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+
+    sql = """
+    WITH hero_hands AS (
+        SELECT h.hand_id, h.hero_position
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+        WHERE p.name = ?
+    ),
+    hero_actions AS (
+        SELECT hh.hand_id, hh.hero_position,
+               CASE WHEN EXISTS (SELECT 1 FROM actions a WHERE a.hand_id = hh.hand_id AND a.street = 'preflop' AND a.player = ? AND a.action IN ('call','bet','raise')) THEN 1 ELSE 0 END AS vpip,
+               CASE WHEN EXISTS (SELECT 1 FROM actions a WHERE a.hand_id = hh.hand_id AND a.street = 'preflop' AND a.player = ? AND a.action IN ('bet','raise')) THEN 1 ELSE 0 END AS pfr
+        FROM hero_hands hh
+    )
+    SELECT ha.hero_position AS position,
+           ROUND(AVG(ha.vpip) * 100, 2) AS vpip_percent,
+           ROUND(AVG(ha.pfr) * 100, 2) AS pfr_percent,
+           COUNT(*) AS hands
+    FROM hero_actions ha
+    GROUP BY ha.hero_position
+    ORDER BY
+        CASE ha.hero_position
+            WHEN 'UTG' THEN 1
+            WHEN 'UTG+1' THEN 2
+            WHEN 'UTG+2' THEN 3
+            WHEN 'MP' THEN 4
+            WHEN 'HJ' THEN 5
+            WHEN 'CO' THEN 6
+            WHEN 'BTN' THEN 7
+            WHEN 'SB' THEN 8
+            WHEN 'BB' THEN 9
+            ELSE 10
+        END
+    """
+
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (hero_name, hero_name, hero_name)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
 
 @mcp.tool()
-def run_network_command(
-    command: str,
-    args: Optional[List[str]] = None
-) -> Dict[str, Any]:
-    """Execute network diagnostics and tools (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac).
+def get_hero_avg_3bet_size_by_position(
+    hero_name: str,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get hero's average 3-bet size by position.
 
     Args:
-        command: Network tool to run. Enum: 'ipconfig', 'ping', 'tracert', 'nslookup', 'netstat', 'arp', 'route', 'getmac'.
-        args: List of arguments to pass to the command.
+        hero_name: Hero player name to analyze (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
     """
-    if command not in ["ipconfig", "ping", "tracert", "nslookup", "netstat", "arp", "route", "getmac"]:
-        raise ValueError(f"Unauthorized network command: {command}")
-    
-    cmd_args = args or []
-    clean_args = []
-    import re
-    for arg in cmd_args:
-        if re.match(r'^[a-zA-Z0-9\-_\.\/\\:\s\?\*]+$', arg):
-            clean_args.append(arg)
-        else:
-            raise ValueError(f"Invalid characters in argument: {arg}")
-            
-    cmd_list = [command] + clean_args
-    try:
-        return _exec_cmd(cmd_list)
-    except Exception as e:
-        return {"error": str(e)}
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+
+    sql = """
+    WITH hero_hands AS (
+        SELECT h.hand_id, h.hero_position
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+        WHERE p.name = ?
+    ),
+    preflop_actions AS (
+        SELECT a.hand_id, a.player, a.action, a.amount,
+               ROW_NUMBER() OVER (PARTITION BY a.hand_id ORDER BY a.sequence) AS action_order
+        FROM actions a
+        WHERE a.street = 'preflop'
+    ),
+    three_bets AS (
+        SELECT pa.hand_id, pa.amount
+        FROM preflop_actions pa
+        WHERE pa.action = 'raise'
+          AND (
+                SELECT COUNT(*)
+                FROM preflop_actions pa2
+                WHERE pa2.hand_id = pa.hand_id
+                  AND pa2.action IN ('bet','raise')
+                  AND pa2.action_order < pa.action_order
+              ) >= 2
+    )
+    SELECT hh.hero_position AS position,
+           ROUND(AVG(tb.amount), 2) AS avg_3bet_size,
+           COUNT(*) AS count
+    FROM three_bets tb
+    JOIN hero_hands hh ON tb.hand_id = hh.hand_id
+    WHERE tb.player = ?
+    GROUP BY hh.hero_position
+    ORDER BY
+        CASE hh.hero_position
+            WHEN 'UTG' THEN 1
+            WHEN 'UTG+1' THEN 2
+            WHEN 'UTG+2' THEN 3
+            WHEN 'MP' THEN 4
+            WHEN 'HJ' THEN 5
+            WHEN 'CO' THEN 6
+            WHEN 'BTN' THEN 7
+            WHEN 'SB' THEN 8
+            WHEN 'BB' THEN 9
+            ELSE 10
+        END
+    """
+
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (hero_name, hero_name)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
 
 @mcp.tool()
-def run_cloudflare_command(
-    command: str,
-    args: List[str],
-    sub_project: str = "root"
-) -> Dict[str, Any]:
-    """Execute Cloudflare wrangler or cloudflared commands to inspect configuration, tunnels, D1, or R2.
+def get_opponent_avg_vpip_by_position(
+    hero_name: str,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get average VPIP of opponents by position.
 
     Args:
-        command: Command to execute. Enum: 'wrangler', 'cloudflared'.
-        args: Arguments to pass (e.g. ['tunnel', 'list'] or ['whoami']).
-        sub_project: Working directory context to run wrangler command. Enum: 'root', 'mcp-server', 'cloudflare-api', 'poker-daemon-worker'.
+        hero_name: Hero player name to exclude (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
     """
-    if command not in ["wrangler", "cloudflared"]:
-        raise ValueError(f"Unauthorized cloudflare command: {command}")
-        
-    if sub_project not in ["root", "mcp-server", "cloudflare-api", "poker-daemon-worker"]:
-        raise ValueError(f"Unauthorized sub_project: {sub_project}")
-        
-    proj_dir = REPO_ROOT
-    if sub_project == "mcp-server":
-        proj_dir = REPO_ROOT / "mcp-server"
-    elif sub_project == "cloudflare-api":
-        proj_dir = REPO_ROOT / "cloudflare-api"
-    elif sub_project == "poker-daemon-worker":
-        proj_dir = REPO_ROOT / "poker-daemon" / "worker"
-        
-    if not proj_dir.is_dir():
-        raise ValueError(f"Directory does not exist: {proj_dir}")
-        
-    clean_args = []
-    import re
-    for arg in args:
-        if re.match(r'^[a-zA-Z0-9\-_\.\/\\:\s=@\"\?\*]+$', arg):
-            clean_args.append(arg)
-        else:
-            raise ValueError(f"Invalid characters in cloudflare argument: {arg}")
-            
-    if command == "wrangler":
-        cmd_list = ["npx", "wrangler"] + clean_args
-    else:
-        cmd_list = [command] + clean_args
-        
-    try:
-        return _exec_cmd(cmd_list, cwd=str(proj_dir))
-    except Exception as e:
-        return {"error": str(e)}
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
 
-
-class _GrokHeaderMiddleware:
-    """Make streamable-HTTP compatible with Grok's remote MCP client.
-
-    Grok (and some proxies) send Accept: */* or omit Accept entirely. The MCP
-    SDK rejects those with HTTP 406 unless application/json is present.
-    This middleware rewrites Accept / Content-Type before the MCP app runs.
+    sql = """
+    SELECT ppf.position,
+           ROUND(AVG(ppf.vpip) * 100, 2) AS avg_vpip_percent,
+           COUNT(*) AS hands
+    FROM player_position_facts ppf
+    WHERE ppf.player != ?
+    GROUP BY ppf.position
+    ORDER BY
+        CASE ppf.position
+            WHEN 'UTG' THEN 1
+            WHEN 'UTG+1' THEN 2
+            WHEN 'UTG+2' THEN 3
+            WHEN 'MP' THEN 4
+            WHEN 'HJ' THEN 5
+            WHEN 'CO' THEN 6
+            WHEN 'BTN' THEN 7
+            WHEN 'SB' THEN 8
+            WHEN 'BB' THEN 9
+            ELSE 10
+        END
     """
 
-    def __init__(self, app):
-        self.app = app
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (hero_name,)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
-    async def __call__(self, scope, receive, send):
-        if scope["type"] == "http":
-            headers = []
-            has_accept = False
-            has_content_type = False
-            method = scope.get("method", "GET").upper()
 
-            for key, value in scope.get("headers", []):
-                lk = key.lower()
-                if lk == b"accept":
-                    has_accept = True
-                    # Force both media types the MCP SDK checks for
-                    headers.append((b"accept", b"application/json, text/event-stream"))
-                    continue
-                if lk == b"content-type":
-                    has_content_type = True
-                    # Normalize to application/json for POST bodies
-                    if method in ("POST", "PUT", "PATCH"):
-                        headers.append((b"content-type", b"application/json"))
-                        continue
-                headers.append((key, value))
+@mcp.tool()
+def get_hero_winrate_tournaments_vs_cash(
+    hero_name: str,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get hero's win rate in tournaments vs cash games (bb/100).
 
-            if not has_accept:
-                headers.append((b"accept", b"application/json, text/event-stream"))
-            if method in ("POST", "PUT", "PATCH") and not has_content_type:
-                headers.append((b"content-type", b"application/json"))
+    Args:
+        hero_name: Hero player name to analyze (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
 
-            # CORS so browser-side probes from grok.com don't fail
-            scope = dict(scope)
-            scope["headers"] = headers
+    sql = """
+    WITH hand_results AS (
+        SELECT h.hand_id,
+               h.is_tournament,
+               CASE WHEN h.is_tournament = 1 THEN 'tournament' ELSE 'cash' END AS game_type,
+               (SELECT p.stack FROM players p WHERE p.hand_id = h.hand_id AND p.is_hero = 1) AS hero_start_stack,
+               h.hero_won
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+        WHERE p.name = ?
+    ),
+    bb_calculated AS (
+        SELECT hr.game_type,
+               SUM(hr.hero_won) / NULLIF(SUM(hr.hero_start_stack), 0) * 100 AS bb_per_hand
+        FROM hand_results hr
+        GROUP BY hr.game_type
+    )
+    SELECT bc.game_type,
+           ROUND(bc.bb_per_hand * 100, 2) AS bb_per_100_hands
+    FROM bb_calculated bc
+    """
 
-            async def send_with_cors(message):
-                if message["type"] == "http.response.start":
-                    extra = [
-                        (b"access-control-allow-origin", b"*"),
-                        (b"access-control-allow-methods", b"GET, POST, DELETE, OPTIONS"),
-                        (
-                            b"access-control-allow-headers",
-                            b"content-type, accept, mcp-session-id, mcp-protocol-version, authorization",
-                        ),
-                        (b"access-control-expose-headers", b"mcp-session-id"),
-                    ]
-                    message = dict(message)
-                    message["headers"] = list(message.get("headers", [])) + extra
-                await send(message)
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (hero_name,)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
 
-            # Handle preflight
-            if method == "OPTIONS":
-                await send_with_cors(
-                    {
-                        "type": "http.response.start",
-                        "status": 204,
-                        "headers": [
-                            (b"content-length", b"0"),
-                        ],
-                    }
-                )
-                await send({"type": "http.response.body", "body": b""})
-                return
 
-            await self.app(scope, receive, send_with_cors)
-            return
+@mcp.tool()
+def get_hero_avg_roi_tournaments(
+    hero_name: str,
+    database: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """Get hero's average ROI in tournaments.
 
-        await self.app(scope, receive, send)
+    Args:
+        hero_name: Hero player name to analyze (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+
+    sql = """
+    WITH tourney_hands AS (
+        SELECT h.hand_id,
+               h.tournament_id,
+               CAST(REPLACE(REPLACE(h.buy_in, '$', ''), ',', '') AS REAL) AS buy_in_amount,
+               h.hero_won
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+        WHERE p.name = ?
+          AND h.is_tournament = 1
+          AND h.buy_in IS NOT NULL
+    ),
+    agg AS (
+        SELECT th.tournament_id,
+               SUM(th.hero_won) AS total_won,
+               SUM(th.buy_in_amount) AS total_buy_in
+        FROM tourney_hands th
+        GROUP BY th.tournament_id
+    )
+    SELECT ROUND(AVG((a.total_won - a.total_buy_in) / NULLIF(a.total_buy_in, 0) * 100), 2) AS average_roi_percent
+    FROM agg a
+    """
+
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(sql, (hero_name,)).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+
+@mcp.tool()
+def get_hero_leak_report(
+    hero_name: str,
+    database: Optional[str] = None
+) -> Dict[str, Any]:
+    """Generate a comprehensive leak report for a hero player.
+
+    Args:
+        hero_name: Hero player name to analyze (e.g. 'Gboss101', 'jdwalka').
+        database: Optional database name (default: poker_hands).
+    """
+    settings = load_settings()
+    db = HandDatabase(str(_resolve_db(database)))
+
+    # Get overall stats
+    overall_sql = """
+    SELECT
+        COUNT(*) AS total_hands,
+        SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS win_rate_percent,
+        AVG(hero_won) AS avg_bb_per_hand,
+        SUM(hero_won) AS total_bb_won
+    FROM hands h
+    JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+    WHERE p.name = ?
+    """
+
+    # Get VPIP/PFR by position
+    vpip_pfr_sql = """
+    WITH hero_hands AS (
+        SELECT h.hand_id, h.hero_position
+        FROM hands h
+        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+        WHERE p.name = ?
+    ),
+    hero_actions AS (
+        SELECT hh.hand_id, hh.hero_position,
+               CASE WHEN EXISTS (SELECT 1 FROM actions a WHERE a.hand_id = hh.hand_id AND a.street = 'preflop' AND a.player = ? AND a.action IN ('call','bet','raise')) THEN 1 ELSE 0 END AS vpip,
+               CASE WHEN EXISTS (SELECT 1 FROM actions a WHERE a.hand_id = hh.hand_id AND a.street = 'preflop' AND a.player = ? AND a.action IN ('bet','raise')) THEN 1 ELSE 0 END AS pfr
+        FROM hero_hands hh
+    )
+    SELECT ha.hero_position AS position,
+           AVG(ha.vpip) * 100 AS vpip_percent,
+           AVG(ha.pfr) * 100 AS pfr_percent
+    FROM hero_actions ha
+    GROUP BY ha.hero_position
+    """
+
+    with db.lock:
+        conn = db._connect()
+        try:
+            conn.row_factory = sqlite3.Row
+
+            # Overall stats
+            overall_row = conn.execute(overall_sql, (hero_name,)).fetchone()
+            overall = dict(overall_row) if overall_row else {}
+
+            # VPIP/PFR by position
+            vpip_pfr_rows = conn.execute(vpip_pfr_sql, (hero_name, hero_name, hero_name)).fetchall()
+            vpip_pfr = [dict(r) for r in vpip_pfr_rows]
+
+            # Tournament vs cash
+            tc_sql = """
+            WITH hand_results AS (
+                SELECT h.hand_id,
+                       h.is_tournament,
+                       CASE WHEN h.is_tournament = 1 THEN 'tournament' ELSE 'cash' END AS game_type,
+                       (SELECT p.stack FROM players p WHERE p.hand_id = h.hand_id AND p.is_hero = 1) AS hero_start_stack,
+                       h.hero_won
+                FROM hands h
+                JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+                WHERE p.name = ?
+            ),
+            bb_calculated AS (
+                SELECT hr.game_type,
+                       SUM(hr.hero_won) / NULLIF(SUM(hr.hero_start_stack), 0) * 100 AS bb_per_hand
+                FROM hand_results hr
+                GROUP BY hr.game_type
+            )
+            SELECT bc.game_type,
+                   ROUND(bc.bb_per_hand * 100, 2) AS bb_per_100_hands
+            FROM bb_calculated bc
+            """
+            tc_rows = conn.execute(tc_sql, (hero_name,)).fetchall()
+            tc_comparison = [dict(r) for r in tc_rows]
+
+            # ROI in tournaments
+            roi_sql = """
+            WITH tourney_hands AS (
+                SELECT h.hand_id,
+                       h.tournament_id,
+                       CAST(REPLACE(REPLACE(h.buy_in, '$', ''), ',', '') AS REAL) AS buy_in_amount,
+                       h.hero_won
+                FROM hands h
+                JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
+                WHERE p.name = ?
+                  AND h.is_tournament = 1
+                  AND h.buy_in IS NOT NULL
+            ),
+            agg AS (
+                SELECT th.tournament_id,
+                       SUM(th.hero_won) AS total_won,
+                       SUM(th.buy_in_amount) AS total_buy_in
+                FROM tourney_hands th
+                GROUP BY th.tournament_id
+            )
+            SELECT ROUND(AVG((a.total_won - a.total_buy_in) / NULLIF(a.total_buy_in, 0) * 100), 2) AS average_roi_percent
+            FROM agg a
+            """
+            roi_row = conn.execute(roi_sql, (hero_name,)).fetchone()
+            roi = dict(roi_row) if roi_row else {}
+
+            return {
+                "hero": hero_name,
+                "total_hands": overall.get("total_hands", 0),
+                "overall": {
+                    "win_rate_percent": round(overall.get("win_rate_percent", 0), 2),
+                    "avg_bb_per_hand": round(overall.get("avg_bb_per_hand", 0), 2),
+                    "total_bb_won": round(overall.get("total_bb_won", 0), 2)
+                },
+                "positional_stats": vpip_pfr,
+                "game_type_comparison": tc_comparison,
+                "tournament_roi": roi.get("average_roi_percent", 0)
+            }
+        finally:
+            conn.close()
+
+
+# ===== END NEW MCP QUERIES =====
 
 
 if __name__ == "__main__":
@@ -1157,6 +1195,6 @@ if __name__ == "__main__":
         # Combine routes
         app = Starlette(routes=stream_app.routes + sse_app.routes, lifespan=stream_app.lifespan)
         app = _GrokHeaderMiddleware(app)
-        
+
         print(f"LeakSnipe MCP (Grok/Claude compatible) on http://127.0.0.1:{port} (serving /mcp and /sse)")
         uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

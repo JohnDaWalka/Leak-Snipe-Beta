@@ -91,8 +91,11 @@ class LeakEngine:
             "by_site": defaultdict(lambda: {
                 "total": 0, "vpip": 0, "pfr": 0,
                 "won": 0.0, "lost": 0.0, "chip_net": 0.0,
+                "cash_hands": 0, "tournament_hands": 0,
             }),
             "biggest_wins": [], "biggest_losses": [],
+            "biggest_cash_wins": [], "biggest_cash_losses": [],
+            "biggest_chip_wins": [], "biggest_chip_losses": [],
         }
         for h in hands:
             hero = h.hero_name(self.settings)
@@ -105,13 +108,20 @@ class LeakEngine:
 
             if h.is_tournament:
                 stats["by_site"][h.site]["chip_net"] += h.hero_won
+                stats["by_site"][h.site]["tournament_hands"] += 1
                 stats["by_position"][pos]["chip_net"] += h.hero_won
-            elif h.hero_won > 0:
-                stats["by_site"][h.site]["won"] += h.hero_won
-                stats["by_position"][pos]["won"] += h.hero_won
+                stats["biggest_chip_wins"].append((h.hero_won, h))
+                stats["biggest_chip_losses"].append((h.hero_won, h))
             else:
-                stats["by_site"][h.site]["lost"] += abs(h.hero_won)
-                stats["by_position"][pos]["lost"] += abs(h.hero_won)
+                stats["by_site"][h.site]["cash_hands"] += 1
+                if h.hero_won > 0:
+                    stats["by_site"][h.site]["won"] += h.hero_won
+                    stats["by_position"][pos]["won"] += h.hero_won
+                else:
+                    stats["by_site"][h.site]["lost"] += abs(h.hero_won)
+                    stats["by_position"][pos]["lost"] += abs(h.hero_won)
+                stats["biggest_cash_wins"].append((h.hero_won, h))
+                stats["biggest_cash_losses"].append((h.hero_won, h))
 
             preflop = h.streets[0] if h.streets else None
             hero_vpip = False
@@ -174,13 +184,15 @@ class LeakEngine:
                 if made_3b:
                     stats["three_bet_made"] += 1
 
-            stats["biggest_wins"].append((h.hero_won, h))
-            stats["biggest_losses"].append((h.hero_won, h))
-
-        stats["biggest_wins"].sort(key=lambda x: x[0], reverse=True)
-        stats["biggest_wins"] = stats["biggest_wins"][:5]
-        stats["biggest_losses"].sort(key=lambda x: x[0])
-        stats["biggest_losses"] = stats["biggest_losses"][:5]
+        # Keep legacy lists cash-only so tournament chip stacks don't dominate "$" rankings.
+        cash_wins = sorted(stats["biggest_cash_wins"], key=lambda x: x[0], reverse=True)[:5]
+        cash_losses = sorted(stats["biggest_cash_losses"], key=lambda x: x[0])[:5]
+        chip_wins = sorted(stats["biggest_chip_wins"], key=lambda x: x[0], reverse=True)[:5]
+        chip_losses = sorted(stats["biggest_chip_losses"], key=lambda x: x[0])[:5]
+        stats["biggest_wins"] = cash_wins
+        stats["biggest_losses"] = cash_losses
+        stats["biggest_chip_wins"] = chip_wins
+        stats["biggest_chip_losses"] = chip_losses
 
         return self._compute_final(stats)
 
@@ -232,7 +244,11 @@ class LeakEngine:
                 "lost": round(d["lost"], 2),
                 "chip_net": round(d.get("chip_net", 0.0), 0),
                 "net": round(d["won"] - d["lost"], 2),
+                "cash_hands": int(d.get("cash_hands", 0)),
+                "tournament_hands": int(d.get("tournament_hands", 0)),
             }
+        result["biggest_chip_wins"] = s.get("biggest_chip_wins", [])
+        result["biggest_chip_losses"] = s.get("biggest_chip_losses", [])
         result["alerts"] = self._generate_alerts(result)
         return result
 
@@ -497,15 +513,24 @@ class PlayerAnalyzer:
         return results
 
     def apply_manual_overrides(self, results: List[Dict[str, Any]], db: Any) -> List[Dict[str, Any]]:
-        for p in results:
-            try:
-                db_info = db.get_player_type(p["name"])
-                if db_info and db_info.get("manual_type"):
-                    p["manual_type"] = db_info["manual_type"]
-                    p["classification"] = db_info["manual_type"]
-                    p["effective_type"] = db_info["manual_type"]
-            except Exception:
-                pass
+        if hasattr(db, "get_all_manual_player_types"):
+            overrides = db.get_all_manual_player_types()
+            for p in results:
+                m_type = overrides.get(p["name"])
+                if m_type:
+                    p["manual_type"] = m_type
+                    p["classification"] = m_type
+                    p["effective_type"] = m_type
+        else:
+            for p in results:
+                try:
+                    db_info = db.get_player_type(p["name"])
+                    if db_info and db_info.get("manual_type"):
+                        p["manual_type"] = db_info["manual_type"]
+                        p["classification"] = db_info["manual_type"]
+                        p["effective_type"] = db_info["manual_type"]
+                except Exception:
+                    pass
         return results
 
 
@@ -542,15 +567,60 @@ def player_stats_payload(
     all_stats: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Return HUD stats for one opponent, using DB cache when available."""
+    if all_stats is not None:
+        match = next((p for p in all_stats if p["name"] == name), None)
+        if match:
+            try:
+                db.save_player_type(
+                    name=name,
+                    auto_type=match.get("auto_type", match["classification"]),
+                    hands=match["hands"],
+                    vpip=match["vpip"],
+                    pfr=match["pfr"],
+                    af=match["af"],
+                    fold_cbet=match["fold_cbet"],
+                    wtsd=match["wtsd"],
+                )
+            except Exception:
+                pass
+            pos_stats = db.get_player_position_stats(name)
+            return {
+                "name": name,
+                "hands": match["hands"],
+                "vpip": match["vpip"],
+                "pfr": match["pfr"],
+                "af": match["af"],
+                "fold_cbet": match["fold_cbet"],
+                "wtsd": match["wtsd"],
+                "three_bet": match.get("three_bet", 0.0),
+                "auto_type": match.get("auto_type", match["classification"]),
+                "manual_type": match.get("manual_type", ""),
+                "effective_type": match.get("effective_type", match["classification"]),
+                "by_position": pos_stats,
+                "cached": False,
+            }
+        else:
+            return {
+                "name": name,
+                "hands": 0,
+                "vpip": 0.0,
+                "pfr": 0.0,
+                "af": 0.0,
+                "fold_cbet": 0.0,
+                "wtsd": 0.0,
+                "three_bet": 0.0,
+                "auto_type": "Unknown",
+                "manual_type": "",
+                "effective_type": "Unknown",
+                "by_position": {},
+                "cached": False,
+            }
+
     cached = db.get_player_type(name)
     if cached and cached.get("hands", 0) > 0:
         pos_stats = db.get_player_position_stats(name)
         three_bet = 0.0
-        if all_stats is not None:
-            match = next((p for p in all_stats if p["name"] == name), None)
-            if match:
-                three_bet = match.get("three_bet", 0.0)
-        elif hands is not None:
+        if hands is not None:
             three_bet = _player_three_bet_pct(name, hands, settings)
         return {
             "name": name,
@@ -568,11 +638,10 @@ def player_stats_payload(
             "cached": True,
         }
 
-    if all_stats is None:
-        if hands is None:
-            hands = db.get_all_hands()
-        analyzer = PlayerAnalyzer(settings)
-        all_stats = analyzer.apply_manual_overrides(analyzer.analyze_players(hands), db)
+    if hands is None:
+        hands = db.get_all_hands()
+    analyzer = PlayerAnalyzer(settings)
+    all_stats = analyzer.apply_manual_overrides(analyzer.analyze_players(hands), db)
     match = next((p for p in all_stats if p["name"] == name), None)
     if not match:
         return {

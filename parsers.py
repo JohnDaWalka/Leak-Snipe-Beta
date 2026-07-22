@@ -336,12 +336,35 @@ class HandParser:
             events.extend(self._extract_coinpoker_events(content))
         return self._build_coinpoker_hands(events)
 
+    @staticmethod
+    def _coinpoker_session_is_tournament(events: List[Dict[str, Any]]) -> Optional[bool]:
+        """Scan the whole event stream for the room's gameType (RING/CASH vs
+        tournament). CoinPoker's client only broadcasts `game.game_alldata`
+        (which carries `roomProperties.gameType`) once per table join, not
+        per hand — so a hand grouped into any slice after the first never
+        sees it, and `_build_coinpoker_hand_from_events` would otherwise fall
+        back to its `is_tournament = True` default for every hand after the
+        first at that table. This finds the signal once for the whole log
+        and every hand built from it reuses the same answer.
+        """
+        for event in events:
+            bean = event.get("bean") or {}
+            if event.get("cmd") != "game.game_alldata":
+                continue
+            init = bean.get("gameInitResponseData") or {}
+            room_props = bean.get("roomProperties") or init.get("roomProperties") or {}
+            game_type_str = str(room_props.get("gameType") or "").upper()
+            if game_type_str:
+                return "RING" not in game_type_str and "CASH" not in game_type_str
+        return None
+
     def _build_coinpoker_hands(self, events: List[Dict[str, Any]]) -> List[Hand]:
         """Group extracted CoinPoker events by hand id and build Hand objects."""
         if not events:
             return []
 
         candidates = self._hero_candidates("CoinPoker")
+        session_is_tournament = self._coinpoker_session_is_tournament(events)
 
         by_hand: Dict[str, List[Dict[str, Any]]] = {}
         last_key = ""
@@ -421,7 +444,9 @@ class HandParser:
             if not complete and not live_dealt:
                 continue
             try:
-                hand = self._build_coinpoker_hand_from_events(hand_events, hero)
+                hand = self._build_coinpoker_hand_from_events(
+                    hand_events, hero, default_is_tournament=session_is_tournament,
+                )
             except Exception as exc:
                 logging.error("CoinPoker JSON hand %s parse error: %s", hand_key, exc)
                 continue
@@ -518,11 +543,17 @@ class HandParser:
 
     def _build_coinpoker_hand_from_events(
         self, events: List[Dict[str, Any]], hero: str,
+        default_is_tournament: Optional[bool] = None,
     ) -> Optional[Hand]:
         h = Hand()
         h.site = "CoinPoker"
         h.game_type = "NLHE"
-        h.is_tournament = True
+        # Falls back to True (tournament) only when NEITHER this hand's own
+        # events NOR any other hand's in the same parse batch ever carried
+        # the room's gameType — i.e. genuinely no signal, not just this
+        # hand's slice missing the one-time broadcast. See
+        # _coinpoker_session_is_tournament.
+        h.is_tournament = True if default_is_tournament is None else default_is_tournament
 
         streets_map: Dict[str, Dict[str, Any]] = {
             "Preflop": {"name": "Preflop", "cards": [], "actions": []},

@@ -23,6 +23,9 @@ type SeatEntry = {
 };
 
 const POLL_MS = 2000;
+// Pointer movement below this (px) between down/up on a seat badge counts as a
+// click (toggle the pinned position-stats panel) rather than a drag.
+const CLICK_MOVE_THRESHOLD_PX = 4;
 
 const clampPct = (v: number) => Math.max(0.03, Math.min(0.97, v));
 
@@ -164,7 +167,7 @@ export function LiveHudOverlay() {
       (settings?.hud_seat_layout as string) ?? "auto",
     );
     const layout = SEAT_POSITIONS[layoutKey];
-    const seatToSlot = buildHeroAnchoredSeatSlots(hand.seat_map, layoutKey);
+    const seatToSlot = buildHeroAnchoredSeatSlots(hand.seat_map, layoutKey, hand.site);
     const entries: SeatEntry[] = [];
     const seenNames = new Set<string>();
 
@@ -199,6 +202,7 @@ export function LiveHudOverlay() {
     startYPct: number;
   } | null>(null);
   const [dragPreview, setDragPreview] = useState<Record<string, { x: number; y: number }>>({});
+  const [pinnedSeats, setPinnedSeats] = useState<Set<string>>(new Set());
 
   const persistSeatOffset = useCallback(
     async (offsetKey: string, x: number, y: number) => {
@@ -246,18 +250,40 @@ export function LiveHudOverlay() {
     }));
   }, []);
 
+  const toggleSeatPin = useCallback((offsetKey: string) => {
+    setPinnedSeats((prev) => {
+      const next = new Set(prev);
+      if (next.has(offsetKey)) {
+        next.delete(offsetKey);
+      } else {
+        next.add(offsetKey);
+      }
+      return next;
+    });
+  }, []);
+
   const handleSeatPointerUp = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
       const drag = dragRef.current;
       dragRef.current = null;
       if (!drag) return;
       (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      const movedPx = Math.hypot(e.clientX - drag.startClientX, e.clientY - drag.startClientY);
+      if (movedPx < CLICK_MOVE_THRESHOLD_PX) {
+        // Treated as a click, not a drag — toggle the pinned position-stats panel.
+        setDragPreview((prev) => {
+          const { [drag.offsetKey]: _dropped, ...rest } = prev;
+          return rest;
+        });
+        toggleSeatPin(drag.offsetKey);
+        return;
+      }
       const preview = dragPreview[drag.offsetKey];
       if (preview) {
         void persistSeatOffset(drag.offsetKey, preview.x, preview.y);
       }
     },
-    [dragPreview, persistSeatOffset],
+    [dragPreview, persistSeatOffset, toggleSeatPin],
   );
 
   return (
@@ -316,6 +342,7 @@ export function LiveHudOverlay() {
                 seat={seat.seat}
                 stats={statsMap[seat.name] ?? null}
                 layoutMode={layoutMode}
+                pinned={pinnedSeats.has(seat.offsetKey)}
               />
             </div>
           );

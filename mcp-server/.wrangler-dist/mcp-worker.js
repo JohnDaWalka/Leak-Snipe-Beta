@@ -1,69 +1,10 @@
-/**
- * HANDOFF FILE — for Cloudflare AI to merge into the deployed "leaksnipe" Worker
- * (the one backing mcp.leaksnipe.win / the phone's "leaksnipe" MCP connector).
- *
- * This is the existing worker's source (pulled via the Workers API) with three
- * changes layered on top. Everything else — tool names, request/response
- * shapes, the McpServer/JSON-RPC scaffolding — is untouched.
- *
- * WHY THIS EXISTS
- * ----------------
- * The 12,000+ hand history objects (~0.6 GB) already live in R2 across three
- * buckets: leaksnipe-hand-histories, poker-hand-histories, poker-hands. But the
- * "leaksnipe-hand-histories" KV namespace that list_hand_histories /
- * search_by_player read from (`meta:*` keys) has never been populated — R2 has
- * the data, nothing indexed it. That's why both tools currently return 0
- * results even though the objects are all there.
- *
- * WHAT CHANGED
- * ------------
- * 1. get_large_hand_history now tries all three R2 buckets in order instead of
- *    just one, since a key could live in any of them.
- * 2. list_hand_histories / search_by_player now read `source_key` / `bucket`
- *    out of the stored metadata when present (falls back to the old
- *    strip-the-prefix behavior for any pre-existing meta: entries), so the
- *    `id` they return is always a valid key you can hand straight to
- *    get_large_hand_history.
- * 3. New tool: backfill_kv_from_r2 — scans all three R2 buckets, parses each
- *    hand's players/game_type/date/stakes, and writes one meta: entry per
- *    object. Paginated (200 objects per bucket per call) so it stays well
- *    inside Worker CPU limits — call it repeatedly, feeding back the
- *    `next_cursors` it returns, until `done: true`.
- *
- * DEPLOYMENT — bindings needed (add the two new R2 bindings; KV binding and
- * the first R2 binding should already exist):
- *
- *   KV:  HAND_HISTORY_KV     -> leaksnipe-hand-histories  (id c13121512b8e4519ae9b3a3a52daeed1)
- *   R2:  HAND_HISTORY_R2     -> leaksnipe-hand-histories   (existing binding, unchanged)
- *   R2:  R2_POKER_HH         -> poker-hand-histories        (NEW — add this binding)
- *   R2:  R2_POKER_HANDS      -> poker-hands                 (NEW — add this binding)
- *   var: BACKFILL_ADMIN_KEY  -> any long random string, used to gate backfill_kv_from_r2
- *
- * RUNNING THE BACKFILL — once deployed, call the MCP tool repeatedly:
- *
- *   POST /mcp
- *   { "jsonrpc": "2.0", "id": 1, "method": "tools/call",
- *     "params": { "name": "backfill_kv_from_r2",
- *                 "arguments": { "admin_key": "<BACKFILL_ADMIN_KEY>", "cursors": {} } } }
- *
- *   Response includes `next_cursors` — pass that object back in as `cursors`
- *   on the next call. Stop when the response's `done` is true. Safe to
- *   re-run: already-indexed keys are skipped (checked via KV existence before
- *   the R2 body is even fetched), so a partial run can always be resumed or
- *   repeated without duplicating work.
- */
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-const LANDING_HTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
+// src/mcp-worker.js
+var LANDING_HTML = `<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LeakSnipe — Field Instrument for Your Own Poker Game</title>
-
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
-
+<title>LeakSnipe \u2014 Field Instrument for Your Own Poker Game</title>
 <style>
 @font-face {
   font-family: 'IBM Plex Mono';
@@ -105,73 +46,55 @@ const LANDING_HTML = `<!DOCTYPE html>
   both themes are a token swap rather than a restyle.
 */
 :root {
-  /* Sniper reticle board — scope-tube green + amber illumination */
-  --scope-void: #050806;
-  --scope-ink: #0a100c;
+  /* ground: scope-tube interior -- red-amber, saturated, not a flat desaturated brown */
+  --scope-void: #070b08;
+  --scope-ink: #0b110d;
   --scope-raised: #121a14;
   --scope-raised-2: #1a241c;
-  --scope-line: rgba(120, 160, 110, 0.18);
+  --scope-line: #2b3a2e;
+  /* ground: ballistic rangecard paper, same red-amber family */
+  --card-paper: #e9ede6;
+  --card-raised: #dee4da;
+  --card-raised-2: #d2dace;
+  --card-line: #bcc7b8;
 
-  --card-paper: #0c120e;
-  --card-raised: #141c16;
-  --card-raised-2: #1c261e;
-  --card-line: rgba(140, 170, 120, 0.16);
+  /* ---- light theme (the rangecard) ---- */
+  --bg: var(--card-paper);
+  --bg-raised: var(--card-raised);
+  --bg-raised-2: var(--card-raised-2);
+  --line: var(--card-line);
+  --text: #1c1710;
+  --text-dim: #5a5240;
+  --text-faint: #837860;
 
-  --bg: var(--scope-ink);
-  --bg-raised: var(--scope-raised);
-  --bg-raised-2: var(--scope-raised-2);
-  --line: var(--scope-line);
+  --accent: #b5651d;
+  --accent-strong: #8f4e14;
+  --accent-soft: rgba(181, 101, 29, 0.16);
+  --accent-soft-2: rgba(181, 101, 29, 0.30);
+  --accent-on: #ffffff;
 
-  /* ballistic glass readouts */
-  --text: #ece5d4;
-  --text-dim: #a89d84;
-  --text-faint: #7c7157;
+  --alert: #c41e2e;
+  --alert-strong: #9d1524;
+  --alert-soft: rgba(196, 30, 46, 0.1);
 
-  /* amber reticle illumination (primary accent) */
-  --accent: #e8912f;
-  --accent-strong: #f5aa52;
-  --accent-soft: rgba(232, 145, 47, 0.16);
-  --accent-soft-2: rgba(232, 145, 47, 0.32);
-  --accent-on: #1a1006;
+  --data: #0b6fa8;
+  --data-strong: #08587f;
+  --data-soft: rgba(11, 111, 168, 0.12);
 
-  /* phosphor green (secondary reticle mode) */
-  --phosphor: #45de85;
-  --phosphor-strong: #6ef0a4;
-  --phosphor-soft: rgba(69, 222, 133, 0.14);
+  /* illumination reads as a glow on glass, as ink on paper -- so paper gets none */
+  --glow-accent: none;
+  --glow-alert: none;
+  --glow-text-accent: none;
+  --glow-text-alert: none;
+  --heading-shadow: 0 1px 2px rgba(28, 23, 16, 0.16);
+  --h2-glow: 0 0 1px rgba(181, 101, 29, 0.5), 0 3px 14px rgba(181, 101, 29, 0.4);
 
-  /* keep --violet aliases mapped to amber so older chat CSS still reads reticle */
-  --violet: #e8912f;
-  --violet-strong: #f5aa52;
-  --violet-soft: rgba(232, 145, 47, 0.14);
-
-  --alert: #ff4455;
-  --alert-strong: #ff6674;
-  --alert-soft: rgba(255, 68, 85, 0.14);
-
-  /* cerulean data flare (coated glass) */
-  --data: #2e9fe0;
-  --data-strong: #5cbaf0;
-  --data-soft: rgba(46, 159, 224, 0.16);
-
-  --glow-accent: 0 0 20px rgba(232, 145, 47, 0.5), 0 0 42px rgba(232, 145, 47, 0.2), 0 0 28px rgba(69, 222, 133, 0.1);
-  --glow-alert: 0 0 14px rgba(255, 68, 85, 0.35);
-  --glow-text-accent: 0 0 14px rgba(232, 145, 47, 0.55);
-  --glow-text-alert: 0 0 12px rgba(255, 68, 85, 0.45);
-  --glow-phosphor: 0 0 16px rgba(69, 222, 133, 0.4);
-  --heading-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  --h2-glow: 0 0 28px rgba(232, 145, 47, 0.55), 0 0 48px rgba(69, 222, 133, 0.16), 0 2px 8px rgba(0, 0, 0, 0.45);
-
-  --font-display: 'Space Grotesk', 'IBM Plex Sans', system-ui, sans-serif;
-  --font-body: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'SF Mono', ui-monospace, Consolas, monospace;
-
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.5), 0 4px 12px rgba(0, 0, 0, 0.35);
+  --font-display: 'Fredoka', 'IBM Plex Sans', sans-serif;
+  --font-body: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
 }
 
-@media (prefers-color-scheme: light) {
+@media (prefers-color-scheme: dark) {
   :root {
     --bg: var(--scope-ink);
     --bg-raised: var(--scope-raised);
@@ -180,13 +103,30 @@ const LANDING_HTML = `<!DOCTYPE html>
     --text: #ece5d4;
     --text-dim: #a89d84;
     --text-faint: #7c7157;
+
     --accent: #e8912f;
     --accent-strong: #f5aa52;
+    --accent-soft: rgba(232, 145, 47, 0.16);
+    --accent-soft-2: rgba(232, 145, 47, 0.32);
     --accent-on: #1a1006;
+
+    --alert: #ff4455;
+    --alert-strong: #ff6674;
+    --alert-soft: rgba(255, 68, 85, 0.14);
+
+    --data: #2e9fe0;
+    --data-strong: #5cbaf0;
+    --data-soft: rgba(46, 159, 224, 0.16);
+
+    --glow-accent: 0 0 14px rgba(232, 145, 47, 0.35);
+    --glow-alert: 0 0 14px rgba(255, 68, 85, 0.35);
+    --glow-text-accent: 0 0 12px rgba(232, 145, 47, 0.5);
+    --glow-text-alert: 0 0 12px rgba(255, 68, 85, 0.45);
+    --heading-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+    --h2-glow: 0 0 18px rgba(232, 145, 47, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
   }
 }
-:root[data-theme="dark"],
-:root[data-theme="light"] {
+:root[data-theme="dark"] {
   --bg: var(--scope-ink);
   --bg-raised: var(--scope-raised);
   --bg-raised-2: var(--scope-raised-2);
@@ -194,16 +134,57 @@ const LANDING_HTML = `<!DOCTYPE html>
   --text: #ece5d4;
   --text-dim: #a89d84;
   --text-faint: #7c7157;
+
   --accent: #e8912f;
   --accent-strong: #f5aa52;
   --accent-soft: rgba(232, 145, 47, 0.16);
   --accent-soft-2: rgba(232, 145, 47, 0.32);
   --accent-on: #1a1006;
+
   --alert: #ff4455;
+  --alert-strong: #ff6674;
+  --alert-soft: rgba(255, 68, 85, 0.14);
+
   --data: #2e9fe0;
-  --glow-accent: 0 0 20px rgba(232, 145, 47, 0.5), 0 0 42px rgba(232, 145, 47, 0.2), 0 0 28px rgba(69, 222, 133, 0.1);
-  --heading-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-  --h2-glow: 0 0 28px rgba(232, 145, 47, 0.55), 0 0 48px rgba(69, 222, 133, 0.16), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --data-strong: #5cbaf0;
+  --data-soft: rgba(46, 159, 224, 0.16);
+
+  --glow-accent: 0 0 14px rgba(232, 145, 47, 0.35);
+  --glow-alert: 0 0 14px rgba(255, 68, 85, 0.35);
+  --glow-text-accent: 0 0 12px rgba(232, 145, 47, 0.5);
+  --glow-text-alert: 0 0 12px rgba(255, 68, 85, 0.45);
+  --heading-shadow: 0 2px 5px rgba(0, 0, 0, 0.45);
+  --h2-glow: 0 0 18px rgba(232, 145, 47, 0.6), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="light"] {
+  --bg: var(--card-paper);
+  --bg-raised: var(--card-raised);
+  --bg-raised-2: var(--card-raised-2);
+  --line: var(--card-line);
+  --text: #1c1710;
+  --text-dim: #5a5240;
+  --text-faint: #837860;
+
+  --accent: #b5651d;
+  --accent-strong: #8f4e14;
+  --accent-soft: rgba(181, 101, 29, 0.16);
+  --accent-soft-2: rgba(181, 101, 29, 0.30);
+  --accent-on: #ffffff;
+
+  --alert: #c41e2e;
+  --alert-strong: #9d1524;
+  --alert-soft: rgba(196, 30, 46, 0.1);
+
+  --data: #0b6fa8;
+  --data-strong: #08587f;
+  --data-soft: rgba(11, 111, 168, 0.12);
+
+  --glow-accent: none;
+  --glow-alert: none;
+  --glow-text-accent: none;
+  --glow-text-alert: none;
+  --heading-shadow: 0 1px 2px rgba(28, 23, 16, 0.16);
+  --h2-glow: 0 0 1px rgba(181, 101, 29, 0.5), 0 3px 14px rgba(181, 101, 29, 0.4);
 }
 
 * { box-sizing: border-box; }
@@ -211,102 +192,60 @@ html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 body {
   margin: 0;
-  background:
-    radial-gradient(1100px 560px at 12% -8%, rgba(232, 145, 47, 0.09), transparent 55%),
-    radial-gradient(900px 520px at 88% 0%, rgba(69, 222, 133, 0.07), transparent 52%),
-    var(--bg);
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-body);
-  font-weight: 400;
-  font-size: 18.5px;
-  line-height: 1.68;
-  letter-spacing: 0.005em;
+  font-weight: 500;
+  font-size: 16.5px;
+  line-height: 1.55;
   overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  text-shadow: var(--heading-shadow);
 }
 ::selection { background: var(--accent-soft-2); color: var(--text); }
 
 .wrap {
-  max-width: 78rem;
+  max-width: 74rem;
   margin: 0 auto;
-  padding: 0 clamp(1.35rem, 4.2vw, 3.25rem);
+  padding: 0 clamp(1.25rem, 4vw, 3rem);
 }
 
 h1, h2, h3, h4 {
   font-family: var(--font-display);
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: -0.035em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   text-wrap: balance;
   margin: 0;
   color: var(--text);
   text-shadow: var(--heading-shadow);
 }
-h1 {
-  font-weight: 700;
-  letter-spacing: -0.045em;
-}
 h2 {
-  font-weight: 700;
-  letter-spacing: -0.04em;
   text-shadow: var(--h2-glow);
-}
-h3 {
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  font-size: 1.28rem;
 }
 
 .eyebrow {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 0.72rem;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--accent-strong);
+  color: var(--accent);
   display: inline-flex;
   align-items: center;
-  gap: 0.6em;
-  text-shadow: var(--glow-text-accent);
-  padding: 0.28rem 0.65rem 0.28rem 0.45rem;
-  border: 1px solid rgba(232, 145, 47, 0.35);
-  border-radius: 999px;
-  background: rgba(232, 145, 47, 0.08);
-  box-shadow: 0 0 22px rgba(232, 145, 47, 0.12);
+  gap: 0.55em;
 }
 .eyebrow::before {
   content: "";
-  width: 0.45em;
-  height: 0.45em;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 12px rgba(232, 145, 47, 0.8), 0 0 4px rgba(69, 222, 133, 0.5);
-  border: none;
-  transform: none;
+  width: 0.6em;
+  height: 0.6em;
+  border: 1px solid currentColor;
+  transform: rotate(45deg);
   flex: none;
 }
 
 p { margin: 0; }
-.prose {
-  max-width: 42em;
-  color: var(--text-dim);
-  font-size: 1.12rem;
-  line-height: 1.72;
-  font-weight: 400;
-}
-.prose strong {
-  color: var(--text);
-  font-weight: 600;
-  background: linear-gradient(180deg, transparent 55%, rgba(232, 145, 47, 0.18) 55%);
-}
-.prose em {
-  color: var(--violet-strong);
-  font-style: italic;
-  font-family: var(--font-body);
-}
-.prose b { color: var(--accent-strong); font-weight: 600; }
-.prose + .prose { margin-top: 1.15rem; }
+.prose { max-width: 42em; color: var(--text-dim); }
+.prose strong { color: var(--text); font-weight: 600; }
+.prose + .prose { margin-top: 1.1rem; }
 
 a { color: inherit; }
 button { font: inherit; color: inherit; }
@@ -342,13 +281,13 @@ button { font: inherit; color: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 4rem;
+  height: 3.6rem;
 }
 .brand {
   font-family: var(--font-mono);
-  font-weight: 600;
-  font-size: 1.05rem;
-  letter-spacing: 0.12em;
+  font-weight: 500;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
   display: flex;
   align-items: center;
   gap: 0.5em;
@@ -367,10 +306,10 @@ button { font: inherit; color: inherit; }
 
 .tabs {
   display: flex;
-  gap: clamp(1.15rem, 2.5vw, 2rem);
+  gap: clamp(1.1rem, 2.4vw, 1.9rem);
   font-family: var(--font-mono);
-  font-size: 0.86rem;
-  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   height: 100%;
 }
@@ -380,10 +319,9 @@ button { font: inherit; color: inherit; }
   cursor: pointer;
   color: var(--text-dim);
   position: relative;
-  padding: 0 0.15rem;
-  transition: color 0.15s, text-shadow 0.15s;
+  padding: 0 0.1rem;
+  transition: color 0.15s;
   white-space: nowrap;
-  font-weight: 500;
 }
 .tab-btn::after {
   content: "";
@@ -421,9 +359,9 @@ button { font: inherit; color: inherit; }
   .hero-grid { grid-template-columns: 1fr; }
 }
 .hero h1 {
-  font-size: clamp(3.1rem, 7.2vw, 5.6rem);
-  line-height: 0.94;
-  margin: 0.75rem 0 1.5rem;
+  font-size: clamp(2.7rem, 6.4vw, 4.85rem);
+  line-height: 0.96;
+  margin: 0.6rem 0 1.35rem;
 }
 /* the headline states the thesis in colour: what is hunted, and what does the hunting */
 .hero h1 .target {
@@ -433,59 +371,44 @@ button { font: inherit; color: inherit; }
 }
 .hero h1 .instrument {
   font-style: normal;
-  color: var(--accent-strong);
-  text-shadow: 0 0 18px rgba(232, 145, 47, 0.55), 0 0 28px rgba(69, 222, 133, 0.2);
-  -webkit-text-fill-color: var(--accent-strong);
-  background: none;
+  color: var(--accent);
+  text-shadow: var(--glow-text-accent);
 }
 .hero .prose { font-size: 1.1rem; margin-bottom: 2.1rem; }
 .cta-row { display: flex; align-items: center; gap: 1.4rem; flex-wrap: wrap; }
 .btn {
   font-family: var(--font-mono);
-  font-size: 0.86rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   text-decoration: none;
-  padding: 1.05rem 1.65rem;
-  border: 1px solid rgba(245, 170, 82, 0.55);
+  padding: 0.85rem 1.5rem;
+  border: 1px solid var(--accent);
   color: var(--accent-on);
-  background: linear-gradient(145deg, #f5aa52 0%, #e8912f 55%, #c9741f 100%);
-  box-shadow: var(--glow-accent), 0 10px 28px rgba(0, 0, 0, 0.4);
+  background: var(--accent);
+  box-shadow: var(--glow-accent);
   display: inline-flex;
   align-items: center;
   gap: 0.6em;
   cursor: pointer;
-  border-radius: 10px;
-  transition: transform 0.12s, filter 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, transform 0.1s;
 }
-.btn:hover {
-  filter: brightness(1.08);
-  box-shadow: 0 0 26px rgba(232, 145, 47, 0.5), 0 0 40px rgba(69, 222, 133, 0.12), 0 12px 32px rgba(0, 0, 0, 0.4);
-}
+.btn:hover { background: var(--accent-strong); }
 .btn:active { transform: translateY(1px); }
-.btn:focus-visible { outline: 2px solid var(--phosphor); outline-offset: 3px; }
+.btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 .btn.ghost {
-  background: rgba(69, 222, 133, 0.04);
+  background: transparent;
   color: var(--text);
-  border-color: rgba(69, 222, 133, 0.28);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  border-color: var(--line);
 }
-.btn.ghost:hover {
-  border-color: rgba(232, 145, 47, 0.5);
-  color: var(--accent-strong);
-  background: rgba(232, 145, 47, 0.08);
-  box-shadow: 0 0 22px rgba(232, 145, 47, 0.18);
-}
+.btn.ghost:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ---------- hero HUD mock ---------- */
 .hud-mock {
-  background: linear-gradient(165deg, rgba(155,135,255,0.08), transparent 40%), var(--bg-raised);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
   padding: 1.1rem;
   position: relative;
-  border-radius: 14px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 40px rgba(232, 145, 47, 0.06);
 }
 .hud-mock .hud-bar {
   display: flex;
@@ -591,49 +514,30 @@ section { padding: clamp(3.5rem, 7vw, 5.5rem) 0; border-top: 1px solid var(--lin
   margin-bottom: clamp(2rem, 4vw, 3rem);
   flex-wrap: wrap;
 }
-.section-head h2 {
-  font-size: clamp(2.35rem, 4.8vw, 3.55rem);
-  margin-top: 0.75rem;
-  line-height: 1.04;
-  letter-spacing: -0.04em;
-  max-width: 15ch;
-}
-.section-head .prose {
-  max-width: 34em;
-  font-size: 1.14rem;
-  color: var(--text-dim);
-  line-height: 1.7;
-}
+.section-head h2 { font-size: clamp(2rem, 4vw, 3rem); margin-top: 0.5rem; }
+.section-head .prose { max-width: 30em; }
 .section-more {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.12em;
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: var(--violet-strong, #c4b5ff);
-  background: rgba(232, 145, 47, 0.1);
-  border: 1px solid rgba(232, 145, 47, 0.28);
-  border-radius: 999px;
+  color: var(--data);
+  background: none;
+  border: none;
   cursor: pointer;
   white-space: nowrap;
-  padding: 0.55rem 0.95rem;
-  box-shadow: 0 0 18px rgba(232, 145, 47, 0.1);
-  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  padding: 0.3rem 0;
 }
-.section-more:hover {
-  color: var(--text);
-  border-color: rgba(69, 222, 133, 0.35);
-  background: rgba(69, 222, 133, 0.12);
-}
+.section-more:hover { color: var(--accent); }
 .section-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 /* ---------- the loop (overview) ---------- */
 .loop-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 0.75rem;
-  background: transparent;
-  border: none;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
 }
 @media (max-width: 900px) {
   .loop-grid { grid-template-columns: repeat(2, 1fr); }
@@ -642,45 +546,24 @@ section { padding: clamp(3.5rem, 7vw, 5.5rem) 0; border-top: 1px solid var(--lin
   .loop-grid { grid-template-columns: 1fr; }
 }
 .loop-step {
-  background:
-    linear-gradient(165deg, rgba(232, 145, 47, 0.07), transparent 42%),
-    var(--bg-raised);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 1.55rem 1.35rem 1.65rem;
+  background: var(--bg);
+  padding: 1.6rem 1.4rem;
   display: flex;
   flex-direction: column;
-  gap: 0.7rem;
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
-  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
-}
-.loop-step:hover {
-  border-color: rgba(69, 222, 133, 0.25);
-  transform: translateY(-2px);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4), 0 0 24px rgba(69, 222, 133, 0.08);
+  gap: 0.75rem;
 }
 .loop-step .num {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  font-size: 0.75rem;
   color: var(--accent);
-  text-shadow: var(--glow-text-accent);
 }
 .loop-step h3 {
   font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.55rem;
-  letter-spacing: -0.03em;
-  text-transform: none;
-  color: var(--text);
+  font-weight: 600;
+  font-size: 1.5rem;
+  letter-spacing: 0.015em;
 }
-.loop-step p {
-  color: var(--text-dim);
-  font-size: 1.02rem;
-  line-height: 1.6;
-  font-weight: 400;
-}
+.loop-step p { color: var(--text-dim); font-size: 0.92rem; line-height: 1.5; }
 
 /* ---------- AI intelligence (overview) ---------- */
 .ai-grid {
@@ -692,76 +575,51 @@ section { padding: clamp(3.5rem, 7vw, 5.5rem) 0; border-top: 1px solid var(--lin
 @media (max-width: 900px) {
   .ai-grid { grid-template-columns: 1fr; }
 }
-.feature-list { display: flex; flex-direction: column; gap: 1rem; margin-top: 2rem; }
-.feature-item {
-  display: flex;
-  gap: 1rem;
-  padding: 1.1rem 1.15rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  background: linear-gradient(145deg, rgba(110, 200, 255, 0.05), transparent 50%), var(--bg-raised);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
-}
+.feature-list { display: flex; flex-direction: column; gap: 1.6rem; margin-top: 2rem; }
+.feature-item { display: flex; gap: 1rem; }
 .feature-item .mark {
   font-family: var(--font-mono);
-  color: var(--data-strong);
-  font-size: 0.8rem;
-  font-weight: 600;
+  color: var(--data);
+  font-size: 0.85rem;
   flex: none;
-  width: 1.5rem;
-  padding-top: 0.15rem;
-  text-shadow: 0 0 12px rgba(110, 200, 255, 0.35);
+  width: 1.4rem;
+  padding-top: 0.2rem;
 }
-.feature-item h3, .feature-item h4 {
-  font-family: var(--font-display);
-  font-weight: 700;
-  text-transform: none;
-  font-size: 1.2rem;
-  letter-spacing: -0.025em;
-  margin-bottom: 0.35rem;
-  color: var(--text);
-}
-.feature-item p { color: var(--text-dim); font-size: 1.04rem; line-height: 1.6; }
+.feature-item h3, .feature-item h4 { font-family: var(--font-body); font-weight: 600; text-transform: none; font-size: 1.02rem; letter-spacing: 0; margin-bottom: 0.25rem; }
+.feature-item p { color: var(--text-dim); font-size: 0.94rem; }
 
 .terminal {
-  background: linear-gradient(180deg, rgba(22, 24, 32, 0.98), rgba(10, 11, 16, 0.99));
-  border: 1px solid rgba(232, 145, 47, 0.22);
-  border-radius: 14px;
-  padding: 1.45rem 1.4rem;
+  background: var(--scope-void);
+  border: 1px solid #223026;
+  padding: 1.4rem;
   font-family: var(--font-mono);
-  font-size: 0.94rem;
-  line-height: 1.75;
-  color: rgba(236, 229, 212, 0.82);
-  box-shadow:
-    0 0 0 1px rgba(232, 145, 47, 0.06) inset,
-    0 16px 40px rgba(0, 0, 0, 0.45),
-    0 0 36px rgba(69, 222, 133, 0.08);
+  font-size: 0.82rem;
+  line-height: 1.65;
+  color: #c3d4c8;
 }
 .terminal + .terminal { margin-top: 1.25rem; }
 .terminal .t-head {
   display: flex;
   justify-content: space-between;
-  color: rgba(242, 240, 245, 0.38);
-  font-size: 0.66rem;
-  font-weight: 600;
+  color: #566b5c;
+  font-size: 0.68rem;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.06em;
   margin-bottom: 1rem;
-  padding-bottom: 0.8rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #1c2820;
 }
-.terminal .q { color: #f2f0f5; }
-.terminal .q::before { content: "› "; color: #45de85; text-shadow: 0 0 10px rgba(69, 222, 133, 0.4); }
-.terminal .sys { color: rgba(232, 145, 47, 0.75); font-size: 0.76rem; margin: 0.55rem 0; }
-.terminal .sys::before { content: "· "; color: #f5aa52; }
-.terminal .a { color: rgba(242, 240, 245, 0.62); margin-top: 0.4rem; }
-.terminal .a strong { color: #5cbaf0; font-weight: 600; }
+.terminal .q { color: #dfeee4; }
+.terminal .q::before { content: "\u203A "; color: #45de85; }
+.terminal .sys { color: #5d7f6a; font-size: 0.76rem; margin: 0.5rem 0; }
+.terminal .sys::before { content: "\xB7 "; }
+.terminal .a { color: #a8bfb0; margin-top: 0.35rem; }
+.terminal .a strong { color: #2e9fe0; font-weight: 500; }
 .terminal .cursor {
   display: inline-block;
   width: 0.5em;
   height: 1em;
   background: #45de85;
-  box-shadow: 0 0 12px rgba(69, 222, 133, 0.5);
   vertical-align: text-bottom;
   animation: blink 1.1s step-end infinite;
 }
@@ -823,40 +681,25 @@ section { padding: clamp(3.5rem, 7vw, 5.5rem) 0; border-top: 1px solid var(--lin
 .leak-wrap { overflow-x: auto; border: 1px solid var(--line); }
 table.leak-table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
   min-width: 640px;
-  font-size: 0.98rem;
-}
-.leak-table {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  font-size: 0.88rem;
 }
 .leak-table th, .leak-table td {
-  padding: 0.85rem 1.05rem;
+  padding: 0.75rem 1rem;
   text-align: left;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-.leak-table tbody tr:last-child td { border-bottom: none; }
-.leak-table tbody tr:hover td {
-  background: rgba(232, 145, 47, 0.05);
+  border-bottom: 1px solid var(--line);
 }
 .leak-table thead th {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
-  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
-  font-weight: 500;
-  background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+  font-weight: 400;
+  background: var(--bg-raised);
 }
-.leak-table td.pos {
-  font-family: var(--font-mono);
-  color: var(--violet-strong, #c4b5ff);
-  font-weight: 500;
-}
+.leak-table td.pos { font-family: var(--font-mono); color: var(--text-dim); }
 .leak-table td.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .leak-table tr:last-child td { border-bottom: none; }
 .leak-table td.flagged { color: var(--alert); font-weight: 500; }
@@ -865,57 +708,38 @@ table.leak-table {
   align-items: center;
   gap: 0.4em;
   font-family: var(--font-mono);
-  font-size: 0.66rem;
-  font-weight: 600;
-  padding: 0.22rem 0.55rem;
-  border: 1px solid rgba(255, 92, 108, 0.45);
-  color: var(--alert-strong);
+  font-size: 0.68rem;
+  padding: 0.18rem 0.5rem;
+  border: 1px solid var(--alert);
+  color: var(--alert);
   background: var(--alert-soft);
   box-shadow: var(--glow-alert);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  border-radius: 999px;
+  letter-spacing: 0.04em;
 }
 
 /* ---------- detail panels ---------- */
-.detail-panel { padding-top: clamp(2.5rem, 5vw, 3.5rem); padding-bottom: 3rem; }
+.detail-panel { padding-top: clamp(2.5rem, 5vw, 3.5rem); }
 .back-link {
   display: inline-flex;
   align-items: center;
   gap: 0.5em;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0.12em;
+  font-size: 0.76rem;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   color: var(--text-faint);
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
+  background: none;
+  border: none;
   cursor: pointer;
   margin-bottom: 2rem;
-  padding: 0.45rem 0.85rem;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  padding: 0.2rem 0;
 }
-.back-link:hover {
-  color: var(--accent);
-  border-color: rgba(69, 222, 133, 0.3);
-  background: rgba(69, 222, 133, 0.08);
-}
+.back-link:hover { color: var(--accent); }
 .back-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .detail-head { margin-bottom: clamp(2.5rem, 5vw, 3.5rem); }
-.detail-head h2 {
-  font-size: clamp(2.75rem, 6vw, 4.25rem);
-  margin: 0.85rem 0 1.25rem;
-  letter-spacing: -0.045em;
-  line-height: 1.0;
-}
-.detail-head .prose {
-  font-size: 1.18rem;
-  max-width: 44em;
-  line-height: 1.72;
-  color: var(--text-dim);
-}
+.detail-head h2 { font-size: clamp(2.4rem, 5.5vw, 3.75rem); margin: 0.6rem 0 1.1rem; }
+.detail-head .prose { font-size: 1.05rem; max-width: 46em; }
 
 .detail-layout {
   display: grid;
@@ -928,66 +752,34 @@ table.leak-table {
 }
 
 .field-entry {
-  padding: clamp(1.35rem, 2.5vw, 1.75rem) 1.35rem;
-  margin-top: 0.85rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background:
-    linear-gradient(165deg, rgba(232, 145, 47, 0.06), transparent 45%),
-    var(--bg-raised);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+  padding: clamp(1.75rem, 3vw, 2.25rem) 0;
+  border-top: 1px solid var(--line);
 }
-.field-entry:first-child { margin-top: 0; }
+.field-entry:first-child { border-top: none; padding-top: 0; }
 .field-entry-head {
   display: flex;
   align-items: baseline;
   gap: 1rem;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.9rem;
 }
-.field-entry-head .num {
-  font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  color: var(--accent);
-  flex: none;
-  text-shadow: var(--glow-text-accent);
-}
-.field-entry-head h3 {
-  font-family: var(--font-display);
-  font-weight: 700;
-  text-transform: none;
-  letter-spacing: -0.025em;
-  font-size: 1.42rem;
-  color: var(--text);
-}
-.field-entry .prose {
-  font-size: 1.08rem;
-  line-height: 1.7;
-  color: var(--text-dim);
-}
-.field-entry .prose b {
-  color: var(--accent-strong);
-  font-weight: 600;
-}
+.field-entry-head .num { font-family: var(--font-mono); font-size: 0.85rem; color: var(--accent); flex: none; }
+.field-entry-head h3 { font-family: var(--font-body); font-weight: 700; text-transform: none; letter-spacing: 0; font-size: 1.3rem; }
+.field-entry .prose { font-size: 0.98rem; }
 
 .spec-rail {
   align-self: start;
   position: sticky;
   top: 5.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--bg-raised);
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
   padding: 1.4rem;
-  border-radius: 14px;
-  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
 }
 .spec-rail .rail-title {
   font-family: var(--font-mono);
   font-size: 0.66rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--violet-strong, #c4b5ff);
+  color: var(--text-faint);
   margin-bottom: 1rem;
 }
 .spec-row {
@@ -996,8 +788,8 @@ table.leak-table {
   gap: 0.75rem;
   font-family: var(--font-mono);
   font-size: 0.76rem;
-  padding: 0.6rem 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line);
 }
 .spec-row:first-of-type { border-top: none; }
 .spec-row .k { color: var(--text-faint); }
@@ -1017,93 +809,13 @@ table.leak-table {
 }
 .gloss-entry .term {
   font-family: var(--font-mono);
-  font-size: 0.92rem;
-  color: var(--data-strong);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-.gloss-entry .def p {
-  color: var(--text-dim);
-  line-height: 1.6;
-}
-.gloss-entry .def p + p { margin-top: 0.5rem; }
-.gloss-entry .def .why {
-  color: var(--text-faint);
-  font-size: 0.86rem;
-  font-family: var(--font-mono);
-  letter-spacing: 0.02em;
-}
-
-
-
-.hero h1 .target {
-  color: var(--alert-strong);
-  text-shadow: var(--glow-text-alert);
-}
-.hero h1 .instrument {
-  font-style: normal;
-  color: var(--accent-strong);
-  text-shadow: 0 0 18px rgba(232, 145, 47, 0.55), 0 0 28px rgba(69, 222, 133, 0.2);
-  -webkit-text-fill-color: var(--accent-strong);
-  background: none;
-}
-.section-head h2 {
-  font-size: clamp(1.85rem, 3.6vw, 2.65rem);
-  line-height: 1.08;
-  max-width: 16ch;
-}
-.section-more {
-  font-family: var(--font-mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--violet-strong);
-  border: 1px solid rgba(232, 145, 47, 0.3);
-  background: rgba(232, 145, 47, 0.1);
-  border-radius: 999px;
-  padding: 0.55rem 0.9rem;
-  box-shadow: 0 0 18px rgba(232, 145, 47, 0.1);
-}
-.section-more:hover {
-  color: var(--text);
-  border-color: rgba(69, 222, 133, 0.35);
-  background: rgba(69, 222, 133, 0.12);
-}
-.field-entry {
-  border: 1px solid var(--line);
-  background: linear-gradient(165deg, rgba(255,255,255,0.03), transparent 40%), var(--bg-raised);
-  border-radius: var(--radius-md);
-  padding: 1.35rem 1.4rem;
-  margin-top: 1rem;
-  box-shadow: var(--shadow-float);
-}
-.field-entry-head h3 {
-  font-family: var(--font-display);
-  font-size: 1.25rem;
-  letter-spacing: -0.02em;
-  text-transform: none;
-}
-.loop-step, .stat-tile, .hud-mock {
-  border-radius: var(--radius-md);
-}
-.topbar {
-  background: color-mix(in srgb, var(--bg) 78%, transparent);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
-}
-.tab-btn {
-  letter-spacing: 0.08em;
+  font-size: 0.95rem;
+  color: var(--data);
   font-weight: 500;
 }
-.tab-btn[aria-selected="true"] {
-  color: var(--accent);
-  text-shadow: var(--glow-text-accent);
-}
-.brand {
-  letter-spacing: 0.14em;
-  font-weight: 600;
-  color: var(--text);
-}
+.gloss-entry .def p + p { margin-top: 0.5rem; }
+.gloss-entry .def .why { color: var(--text-faint); font-size: 0.86rem; }
+
 
 /* ---------- live with grok (xAI chat) ---------- */
 .grok-strip { margin-top: 0.5rem; }
@@ -1118,12 +830,12 @@ table.leak-table {
 .grok-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
-    radial-gradient(120% 80% at 0% 0%, rgba(232, 145, 47, 0.12), transparent 55%),
-    radial-gradient(100% 70% at 100% 100%, rgba(69, 222, 133, 0.08), transparent 50%),
+    radial-gradient(120% 80% at 0% 0%, rgba(120, 90, 255, 0.12), transparent 55%),
+    radial-gradient(100% 70% at 100% 100%, rgba(0, 255, 163, 0.06), transparent 50%),
     linear-gradient(165deg, #12141a 0%, #0a0b0f 100%);
   padding: 1.3rem 1.2rem 1.4rem;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
   border-radius: 14px;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03) inset,
@@ -1135,63 +847,58 @@ table.leak-table {
   position: absolute;
   inset: 0 auto 0 0;
   width: 2px;
-  background: linear-gradient(180deg, #e8912f, #45de85);
+  background: linear-gradient(180deg, #9b87ff, #00ffa3);
   opacity: 0.9;
 }
 .grok-card.discipline::before {
-  background: linear-gradient(180deg, #2e9fe0, #45de85);
+  background: linear-gradient(180deg, #6ec8ff, #9b87ff);
 }
 .grok-card.pressure::before {
-  background: linear-gradient(180deg, #ff4455, #e8912f);
+  background: linear-gradient(180deg, #ff6b6b, #9b87ff);
 }
 .grok-card .ord {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(232, 145, 47, 0.75);
-  margin-bottom: 0.6rem;
-  text-shadow: 0 0 12px rgba(232, 145, 47, 0.25);
+  color: rgba(255, 255, 255, 0.4);
+  margin-bottom: 0.55rem;
 }
 .grok-card h3 {
-  font-family: var(--font-display);
-  font-size: 1.35rem;
+  font-family: var(--font-body);
+  font-size: 1.15rem;
   font-weight: 700;
-  margin: 0 0 0.6rem;
-  letter-spacing: -0.025em;
-  color: #f4efe4;
-  text-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  margin: 0 0 0.55rem;
+  letter-spacing: -0.01em;
+  color: #f4f4f5;
 }
 .grok-meta {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: #f5aa52;
-  margin-bottom: 1rem;
-  letter-spacing: 0.04em;
-  text-shadow: 0 0 14px rgba(232, 145, 47, 0.35);
+  font-size: 0.72rem;
+  color: #9b87ff;
+  margin-bottom: 0.9rem;
+  letter-spacing: 0.02em;
 }
 
 /* chat transcript box */
 .grok-dialogue {
   display: flex;
   flex-direction: column;
-  gap: 0.85rem;
+  gap: 0.7rem;
   font-family: var(--font-mono);
-  font-size: 0.88rem;
-  line-height: 1.6;
-  color: rgba(236, 229, 212, 0.78);
-  border: 1px solid rgba(232, 145, 47, 0.14);
-  border-radius: 14px;
-  padding: 1rem 0.95rem;
-  margin: 0 0 1.1rem;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 0.85rem 0.8rem;
+  margin: 0 0 1rem;
   background:
     linear-gradient(180deg, rgba(22, 24, 32, 0.95), rgba(12, 13, 18, 0.98));
   box-shadow:
-    0 0 0 1px rgba(232, 145, 47, 0.1) inset,
+    0 0 0 1px rgba(155, 135, 255, 0.08) inset,
     0 12px 28px rgba(0, 0, 0, 0.5),
-    0 0 40px rgba(232, 145, 47, 0.06);
+    0 0 40px rgba(155, 135, 255, 0.06);
 }
 
 .grok-dialogue .msg {
@@ -1210,59 +917,55 @@ table.leak-table {
   color: rgba(255, 255, 255, 0.35);
   padding: 0 0.15rem;
 }
-.grok-dialogue .msg.you .who { color: #5cbaf0; }
-.grok-dialogue .msg.grok .who { color: #45de85; }
+.grok-dialogue .msg.you .who { color: #6ec8ff; }
+.grok-dialogue .msg.grok .who { color: #00ffa3; }
 
 .grok-dialogue .bubble {
   margin: 0;
-  padding: 0.9rem 1.05rem;
-  border-radius: 14px;
-  line-height: 1.58;
-  font-size: 0.92rem;
-  font-weight: 500;
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  line-height: 1.5;
+  font-size: 0.8rem;
   white-space: pre-wrap;
   word-break: break-word;
   box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.5),
-    0 3px 8px rgba(0, 0, 0, 0.35),
-    0 0 20px rgba(232, 145, 47, 0.06);
+    0 8px 20px rgba(0, 0, 0, 0.4),
+    0 2px 6px rgba(0, 0, 0, 0.3);
 }
 
 .grok-dialogue .msg.you .bubble {
   background: linear-gradient(145deg, #2a2d3a 0%, #1a1c26 100%);
-  border: 1px solid rgba(46, 159, 224, 0.28);
+  border: 1px solid rgba(110, 200, 255, 0.22);
   color: #e8eef5;
   border-bottom-right-radius: 4px;
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.45),
-    0 0 18px rgba(46, 159, 224, 0.1);
+    0 0 18px rgba(110, 200, 255, 0.08);
 }
 
 .grok-dialogue .msg.grok .bubble {
   background: linear-gradient(145deg, rgba(20, 40, 32, 0.95) 0%, rgba(12, 18, 16, 0.98) 100%);
-  border: 1px solid rgba(69, 222, 133, 0.28);
+  border: 1px solid rgba(0, 255, 163, 0.22);
   color: #d8f5e8;
   border-bottom-left-radius: 4px;
   box-shadow:
     0 8px 22px rgba(0, 0, 0, 0.45),
-    0 0 22px rgba(69, 222, 133, 0.12);
+    0 0 22px rgba(0, 255, 163, 0.08);
 }
 
 .grok-result {
   font-family: var(--font-mono);
-  font-size: 1.08rem;
+  font-size: 0.95rem;
   font-weight: 600;
-  margin-bottom: 0.65rem;
-  letter-spacing: 0.02em;
+  margin-bottom: 0.55rem;
 }
 .grok-result.neg { color: rgba(255, 255, 255, 0.55); }
-.grok-result.pos { color: #45de85; text-shadow: 0 0 18px rgba(69, 222, 133, 0.35); }
+.grok-result.pos { color: #00ffa3; text-shadow: 0 0 18px rgba(0, 255, 163, 0.25); }
 .grok-take {
-  font-size: 1.05rem;
-  line-height: 1.55;
-  color: rgba(236, 229, 212, 0.88);
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
   margin: 0;
-  font-weight: 500;
 }
 .grok-tags {
   display: flex;
@@ -1283,7 +986,7 @@ table.leak-table {
 }
 .grok-hero-banner {
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: linear-gradient(120deg, rgba(232, 145, 47, 0.1), rgba(69, 222, 133, 0.04));
+  background: linear-gradient(120deg, rgba(155, 135, 255, 0.08), rgba(0, 255, 163, 0.04));
   padding: 1.1rem 1.25rem;
   margin-bottom: 1.25rem;
   display: flex;
@@ -1300,27 +1003,25 @@ table.leak-table {
   color: rgba(255, 255, 255, 0.55);
   letter-spacing: 0.04em;
 }
-.grok-hero-banner .story b { color: #45de85; font-weight: 500; }
+.grok-hero-banner .story b { color: #00ffa3; font-weight: 500; }
 .grok-mcp {
   font-family: var(--font-mono);
   font-size: 0.72rem;
-  color: #f5aa52;
+  color: #9b87ff;
   word-break: break-all;
 }
 .grok-mcp code {
   background: #0a0b0f;
-  border: 1px solid rgba(232, 145, 47, 0.3);
+  border: 1px solid rgba(155, 135, 255, 0.25);
   padding: 0.35rem 0.55rem;
-  color: #f5aa52;
+  color: #c4b5ff;
   border-radius: 6px;
 }
 
 /* ---------- footer ---------- */
 footer {
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  padding: 2.75rem 0 3.25rem;
-  margin-top: 1rem;
-  background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.25));
+  border-top: 1px solid var(--line);
+  padding: 2.5rem 0 3rem;
 }
 footer .wrap {
   display: flex;
@@ -1331,29 +1032,21 @@ footer .wrap {
 }
 footer .foot-line {
   font-family: var(--font-mono);
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 0.72rem;
   color: var(--text-faint);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 footer .foot-loop {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   color: var(--text-dim);
-  letter-spacing: 0.05em;
 }
-footer .foot-loop b {
-  color: var(--accent);
-  font-weight: 600;
-  text-shadow: var(--glow-text-accent);
-}
+footer .foot-loop b { color: var(--accent); font-weight: 500; }
 </style>
-</head>
-<body>
+
 <div class="topbar">
   <div class="wrap">
-    <button class="brand" data-nav="overview" aria-label="LeakSnipe — back to overview">
+    <button class="brand" data-nav="overview" aria-label="LeakSnipe \u2014 back to overview">
       <svg class="brand-mark" viewBox="0 0 32 32" width="21" height="21" aria-hidden="true">
         <circle class="ring" cx="16" cy="16" r="13" fill="none" stroke-width="2"></circle>
         <line class="cross" x1="16" y1="3.5" x2="16" y2="11.5" stroke-width="1.6"></line>
@@ -1385,9 +1078,9 @@ footer .foot-loop b {
       <div>
         <span class="eyebrow">Field instrument, not a scoreboard</span>
         <h1><span class="target">Leaks</span> don't survive<br>contact with <span class="instrument">the data.</span></h1>
-        <p class="prose">LeakSnipe tracks every hand you play, reads the table live while you're seated, and gives an AI coach direct query access to your own database — from your desk, or from your phone, mid-session.</p>
+        <p class="prose">LeakSnipe tracks every hand you play, reads the table live while you're seated, and gives an AI coach direct query access to your own database \u2014 from your desk, or from your phone, mid-session.</p>
         <div class="cta-row">
-          <button class="btn" data-nav="grok">Live with Grok →</button>
+          <button class="btn" data-nav="grok">Live with Grok \u2192</button>
           <button class="btn ghost" data-nav="loop">See how it works</button>
         </div>
       </div>
@@ -1395,16 +1088,16 @@ footer .foot-loop b {
         <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
         <div class="hud-bar">
           <span class="live"><span class="pip"></span>Live overlay</span>
-          <span>Aviston · 6-max</span>
+          <span>Aviston \xB7 6-max</span>
         </div>
         <div class="table-oval">
           <div class="sweep"></div>
-          <div class="seat s1"><div class="name">Kolunio5</div><div class="stat">VPIP 22 · PFR 17</div></div>
-          <div class="seat s2 flag"><div class="name">pokerfunusa</div><div class="stat">VPIP 41 · PFR 9 — leak</div></div>
-          <div class="seat s3"><div class="name">boolinback</div><div class="stat">VPIP 19 · PFR 14</div></div>
-          <div class="seat s4 hero"><div class="name">You · BB</div><div class="stat">VPIP 18.5 · PFR 8.3</div></div>
-          <div class="seat s5"><div class="name">Defton</div><div class="stat">VPIP 26 · PFR 12</div></div>
-          <div class="seat s6"><div class="name">andakindi</div><div class="stat">VPIP 31 · PFR 6</div></div>
+          <div class="seat s1"><div class="name">Kolunio5</div><div class="stat">VPIP 22 \xB7 PFR 17</div></div>
+          <div class="seat s2 flag"><div class="name">pokerfunusa</div><div class="stat">VPIP 41 \xB7 PFR 9 \u2014 leak</div></div>
+          <div class="seat s3"><div class="name">boolinback</div><div class="stat">VPIP 19 \xB7 PFR 14</div></div>
+          <div class="seat s4 hero"><div class="name">You \xB7 BB</div><div class="stat">VPIP 18.5 \xB7 PFR 8.3</div></div>
+          <div class="seat s5"><div class="name">Defton</div><div class="stat">VPIP 26 \xB7 PFR 12</div></div>
+          <div class="seat s6"><div class="name">andakindi</div><div class="stat">VPIP 31 \xB7 PFR 6</div></div>
         </div>
         <div class="hud-caption">
           <span>Hand #2745796706</span>
@@ -1421,7 +1114,7 @@ footer .foot-loop b {
           <span class="eyebrow">The review loop</span>
           <h2>Track. Find. Review.<br>Study. Improve.</h2>
         </div>
-        <button class="section-more" data-nav="loop">Full breakdown →</button>
+        <button class="section-more" data-nav="loop">Full breakdown \u2192</button>
       </div>
       <div class="loop-grid">
         <div class="loop-step">
@@ -1432,7 +1125,7 @@ footer .foot-loop b {
         <div class="loop-step">
           <span class="num">02</span>
           <h3>Find</h3>
-          <p>Every hand is indexed and searchable — by position, result, stakes, opponent, or a tag you set yourself.</p>
+          <p>Every hand is indexed and searchable \u2014 by position, result, stakes, opponent, or a tag you set yourself.</p>
         </div>
         <div class="loop-step">
           <span class="num">03</span>
@@ -1459,11 +1152,11 @@ footer .foot-loop b {
         <div>
           <span class="eyebrow">Live AI intelligence</span>
           <h2 style="margin-top:0.6rem;">Ask your own<br>database anything.</h2>
-          <p class="prose" style="margin-top:1.1rem;">This isn't a canned report. The coach holds direct tool-call access to your live hand history — it runs real queries against your actual database, not a cached summary written last week.</p>
+          <p class="prose" style="margin-top:1.1rem;">This isn't a canned report. The coach holds direct tool-call access to your live hand history \u2014 it runs real queries against your actual database, not a cached summary written last week.</p>
           <div class="feature-list">
             <div class="feature-item">
               <span class="mark">01</span>
-              <div><h3>Reads your real database</h3><p>Career stats, position-scoped VPIP/PFR, and specific hands are pulled live — every answer is grounded in a query, not a guess.</p></div>
+              <div><h3>Reads your real database</h3><p>Career stats, position-scoped VPIP/PFR, and specific hands are pulled live \u2014 every answer is grounded in a query, not a guess.</p></div>
             </div>
             <div class="feature-item">
               <span class="mark">02</span>
@@ -1471,19 +1164,19 @@ footer .foot-loop b {
             </div>
             <div class="feature-item">
               <span class="mark">03</span>
-              <div><h3>Reaches your desk from anywhere</h3><p>A live tunnel connects the coach straight to your desktop's database — the actual table, not an export — reachable from a phone through a standard MCP connector.</p></div>
+              <div><h3>Reaches your desk from anywhere</h3><p>A live tunnel connects the coach straight to your desktop's database \u2014 the actual table, not an export \u2014 reachable from a phone through a standard MCP connector.</p></div>
             </div>
           </div>
-          <button class="section-more" style="margin-top:1.75rem;" data-nav="intelligence">Full breakdown →</button>
+          <button class="section-more" style="margin-top:1.75rem;" data-nav="intelligence">Full breakdown \u2192</button>
         </div>
         <div class="terminal scope">
           <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
-          <div class="t-head"><span>leaksnipe · coach session</span><span>live query</span></div>
+          <div class="t-head"><span>leaksnipe \xB7 coach session</span><span>live query</span></div>
           <div class="q">what's my fold-to-cbet from the big blind?</div>
-          <div class="sys">querying player_position_facts…</div>
-          <div class="a">57% — high. Standard from the BB specifically sits closer to 45%. You're folding a pair-or-better hand at showdown-viable frequency.</div>
+          <div class="sys">querying player_position_facts\u2026</div>
+          <div class="a">57% \u2014 high. Standard from the BB specifically sits closer to 45%. You're folding a pair-or-better hand at showdown-viable frequency.</div>
           <div class="q">show me three where I folded top pair</div>
-          <div class="sys">search_hands position=BB outcome=lost…</div>
+          <div class="sys">search_hands position=BB outcome=lost\u2026</div>
           <div class="a">Found 11 matches over the sample. Pulling the three highest-pot examples <span class="cursor"></span></div>
         </div>
       </div>
@@ -1497,7 +1190,7 @@ footer .foot-loop b {
           <span class="eyebrow">Your hands, everywhere you are</span>
           <h2>Local first.<br>Synced everywhere.</h2>
         </div>
-        <button class="section-more" data-nav="architecture">Full breakdown →</button>
+        <button class="section-more" data-nav="architecture">Full breakdown \u2192</button>
       </div>
       <div class="arch-grid">
         <div class="arch-card">
@@ -1508,12 +1201,12 @@ footer .foot-loop b {
         <div class="arch-card">
           <span class="k">Sync</span>
           <h3>Object storage + index</h3>
-          <p>Every imported hand mirrors to object storage and a relational index the moment it lands — searchable by player, position, and outcome within seconds.</p>
+          <p>Every imported hand mirrors to object storage and a relational index the moment it lands \u2014 searchable by player, position, and outcome within seconds.</p>
         </div>
         <div class="arch-card">
           <span class="k">Live query</span>
           <h3>Tunnel to the real table</h3>
-          <p>A direct connection from the coach to your desktop database — not a nightly export. Career stats update as fast as you can ask for them.</p>
+          <p>A direct connection from the coach to your desktop database \u2014 not a nightly export. Career stats update as fast as you can ask for them.</p>
         </div>
       </div>
       <div class="stat-strip">
@@ -1531,7 +1224,7 @@ footer .foot-loop b {
           <span class="eyebrow">Leak detection</span>
           <h2>Every stat,<br>broken by position.</h2>
         </div>
-        <button class="section-more" data-nav="leaks">Full breakdown →</button>
+        <button class="section-more" data-nav="leaks">Full breakdown \u2192</button>
       </div>
       <div class="leak-wrap">
         <table class="leak-table">
@@ -1557,94 +1250,70 @@ footer .foot-loop b {
         <div>
           <span class="eyebrow">Live with Grok</span>
           <h2>Aggressive when strong.<br>Gone when weak.</h2>
-          <p class="prose">Real mid-session coaching against the LeakSnipe database — not vibes. Three consecutive hands from one MTT orbit: value, discipline, pressure.</p>
+          <p class="prose">Real mid-session coaching against the LeakSnipe database \u2014 not vibes. Three consecutive hands from one MTT orbit: value, discipline, pressure.</p>
         </div>
-        <button class="section-more" data-nav="grok">Full session →</button>
+        <button class="section-more" data-nav="grok">Full session \u2192</button>
       </div>
 
       <div class="grok-hero-banner">
-        <div class="story"><b>99</b> charge dry A-high → <b>32s</b> fold vs 3-bet → <b>TT</b> barrel wet A-K</div>
+        <div class="story"><b>99</b> charge dry A-high \u2192 <b>32s</b> fold vs 3-bet \u2192 <b>TT</b> barrel wet A-K</div>
       </div>
 
       <div class="grok-grid">
         <article class="grok-card">
-          <div class="ord">01 · Value</div>
+          <div class="ord">01 \xB7 Value</div>
           <h3>Pocket nines, one-and-done</h3>
-          <div class="grok-meta">CO · 9♣ 9♦ · dry A♠ 7♦ 5♥</div>
+          <div class="grok-meta">CO \xB7 9\u2663 9\u2666 \xB7 dry A\u2660 7\u2666 5\u2665</div>
           <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
             <div class="msg you">
               <span class="who">You</span>
-              <p class="bubble">Pull the hand right before my pocket tens — full streets, not a one-liner. Was I too passive or did I print?</p>
+              <p class="bubble">Pull the hand right before my pocket tens \u2014 full streets, not a one-liner. Was I too passive or did I print?</p>
             </div>
             <div class="msg grok">
               <span class="who">Grok</span>
-              <p class="bubble">CO · 9♣9♦. You open to 1,400, one caller. Flop comes dry A♠7♦5♥. You fire 2,634… they fold. +2,528 chips, no showdown.</p>
-            </div>
-            <div class="msg you">
-              <span class="who">You</span>
-              <p class="bubble">Is charging A-high with nines spewy or standard there?</p>
-            </div>
-            <div class="msg grok">
-              <span class="who">Grok</span>
-              <p class="bubble">Standard when the board is dry and you have an overpair. You're not "bluffing the ace" — you're denying equity and taking it down. Clean value line.</p>
+              <p class="bubble">Got it \u2014 CO 9\u26639\u2666. You open, one caller, dry A\u26607\u26665\u2665. You fire again\u2026 villain folds. +2,528 chips, no showdown. Clean value aggression.</p>
             </div>
           </div>
-          <div class="grok-result pos">+2,528 chips · no showdown</div>
+          <div class="grok-result pos">+2,528 chips \xB7 no showdown</div>
           <p class="grok-take">Overpair on a dry board: charge it. Clean aggression, not a free check-down.</p>
           <div class="grok-tags"><span>MTT</span><span>99</span><span>CO</span><span>c-bet</span></div>
         </article>
 
         <article class="grok-card discipline">
-          <div class="ord">02 · Discipline</div>
+          <div class="ord">02 \xB7 Discipline</div>
           <h3>32s vs raise + 3-bet</h3>
-          <div class="grok-meta">MP · 3♥ 2♠ · preflop fold</div>
+          <div class="grok-meta">MP \xB7 3\u2665 2\u2660 \xB7 preflop fold</div>
           <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
             <div class="msg you">
               <span class="who">You</span>
-              <p class="bubble">What was my most recent hand live from the DB? Don't sugarcoat it — fold or hero call?</p>
+              <p class="bubble">What was my most recent hand live from the DB? Don\u2019t sugarcoat it \u2014 fold or hero call?</p>
             </div>
             <div class="msg grok">
               <span class="who">Grok</span>
-              <p class="bubble">MP · 3♥2♠. Raise to 250, then a 3-bet to 500 in front. You muck. −63 chips. No flop. Correct fold.</p>
-            </div>
-            <div class="msg you">
-              <span class="who">You</span>
-              <p class="bubble">Even suited? People love defending 32s "for the multiway."</p>
-            </div>
-            <div class="msg grok">
-              <span class="who">Grok</span>
-              <p class="bubble">Suited doesn't print when you're squished by open + 3-bet. That's not scared money — that's stack-preserving discipline. Stay ready for the next orbit.</p>
+              <p class="bubble">MP 3\u26652\u2660. Raise, then 3-bet in front. You muck. \u221263 chips. Correct \u2014 32s does not continue multiway heat. Stack-preserving discipline.</p>
             </div>
           </div>
-          <div class="grok-result neg">−63 chips · stack preserved</div>
-          <p class="grok-take">Weak suited connector doesn’t continue here. That’s mid-stack discipline, not scared money.</p>
+          <div class="grok-result neg">\u221263 chips \xB7 stack preserved</div>
+          <p class="grok-take">Weak suited connector doesn\u2019t continue here. That\u2019s mid-stack discipline, not scared money.</p>
           <div class="grok-tags"><span>MTT</span><span>32s</span><span>fold</span><span>3-bet pot</span></div>
         </article>
 
         <article class="grok-card pressure">
-          <div class="ord">03 · Pressure</div>
-          <h3>Pocket tens that didn’t freeze</h3>
-          <div class="grok-meta">MP · T♠ T♥ · wet A♥ 8♥ K♠</div>
+          <div class="ord">03 \xB7 Pressure</div>
+          <h3>Pocket tens that didn\u2019t freeze</h3>
+          <div class="grok-meta">MP \xB7 T\u2660 T\u2665 \xB7 wet A\u2665 8\u2665 K\u2660</div>
           <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
             <div class="msg you">
               <span class="who">You</span>
-              <p class="bubble">Walk me through my pocket tens street-by-street — was the barrel on A-K too thin or was I supposed to charge?</p>
+              <p class="bubble">Walk me through my pocket tens hand street-by-street \u2014 was the barrel on A-K too thin or was I supposed to charge?</p>
             </div>
             <div class="msg grok">
               <span class="who">Grok</span>
-              <p class="bubble">MP · T♠T♥. You open 1,680, one call. Flop A♥8♥K♠ — wet and scary. You keep firing. Turn 2♠ blank: more heat. River J♠, they fold. +4,226.</p>
-            </div>
-            <div class="msg you">
-              <span class="who">You</span>
-              <p class="bubble">Feels like I could be dead to any ace… why is that good?</p>
-            </div>
-            <div class="msg grok">
-              <span class="who">Grok</span>
-              <p class="bubble">Because passive tens die slowly. You charged the draw, applied pressure on the blank, and won without showdown. Overpair on a scare board — protection plus fold equity. The better side of your game.</p>
+              <p class="bubble">MP T\u2660T\u2665. Open, call. Flop A\u26658\u2665K\u2660 \u2014 you keep firing. Turn blank, more heat. River: villain folds. +4,226. Overpair on a scare board; pressure paid.</p>
             </div>
           </div>
-          <div class="grok-result pos">+4,226 chips · no showdown</div>
-          <p class="grok-take">Overpair on a scary A-K board — protection plus pressure. The better side of the game.</p>
+          <div class="grok-result pos">+4,226 chips \xB7 no showdown</div>
+          <p class="grok-take">Overpair on a scary A-K board \u2014 protection plus pressure. The better side of the game.</p>
           <div class="grok-tags"><span>MTT</span><span>TT</span><span>barrel</span><span>no SD</span></div>
         </article>
       </div>
@@ -1653,114 +1322,51 @@ footer .foot-loop b {
 
   <footer>
     <div class="wrap">
-      <span class="foot-line">LEAKSNIPE.WIN — a local-first poker study workstation</span>
-      <span class="foot-loop"><b>Track</b> → <b>Find</b> → <b>Review</b> → <b>Study</b> → <b>Improve</b> · <b>Ask Grok</b></span>
+      <span class="foot-line">LEAKSNIPE.WIN \u2014 a local-first poker study workstation</span>
+      <span class="foot-loop"><b>Track</b> \u2192 <b>Find</b> \u2192 <b>Review</b> \u2192 <b>Study</b> \u2192 <b>Improve</b> \xB7 <b>Ask Grok</b></span>
     </div>
   </footer>
 </div>
 
 
 <!-- ================= DETAIL: LIVE WITH GROK ================= -->
-<!-- ================= DETAIL: LIVE WITH GROK ================= -->
 <section class="view detail-panel" id="view-grok" role="tabpanel" aria-labelledby="tab-grok" tabindex="-1" hidden>
   <div class="wrap">
-    <button class="back-link" data-nav="overview">← Overview</button>
+    <button class="back-link" data-nav="overview">\u2190 Overview</button>
     <div class="detail-head">
-      <span class="eyebrow">Live session · Grok × LeakSnipe · build 0720x</span>
-      <h2>Aggressive when strong.<br>Gone when weak.</h2>
-      <p class="prose">Real mid-session coaching from the hand database. Four-bubble chats — not marketing lorem. Same MTT orbit: value → discipline → pressure.</p>
+      <span class="eyebrow">Field manual \xB7 Session tape</span>
+      <h2>Three hands.<br>One coaching arc.</h2>
+      <p class="prose">Pulled live from the LeakSnipe hand database during an MTT session. Grok reads streets, stacks, and results \u2014 then coaches like someone sitting next to you, not a generic chatbot.</p>
     </div>
 
     <div class="grok-hero-banner">
-      <div class="story"><b>99</b> charge dry A-high → <b>32s</b> fold vs 3-bet → <b>TT</b> barrel wet A-K</div>
+      <div class="story">Mid-session coaching against your own hand database \u2014 value, discipline, pressure.</div>
     </div>
 
-    <div class="grok-grid grok-grid-detail">
-      <article class="grok-card">
-        <div class="ord">01 · Value</div>
-        <h3>Pocket nines, one-and-done</h3>
-        <div class="grok-meta">CO · 9♣ 9♦ · dry A♠ 7♦ 5♥</div>
-        <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">Pull the hand right before my pocket tens — full streets, not a one-liner. Was I too passive or did I print?</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">CO · 9♣9♦. You open to 1,400, one caller. Flop comes dry A♠7♦5♥. You fire 2,634… they fold. +2,528 chips, no showdown.</p>
-          </div>
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">Is charging A-high with nines spewy or standard there?</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">Standard when the board is dry and you have an overpair. You're not "bluffing the ace" — you're denying equity and taking it down. Clean value line.</p>
-          </div>
-        </div>
-        <div class="grok-result pos">+2,528 chips · no showdown</div>
-        <p class="grok-take">Overpair on a dry board: charge it. Clean aggression, not a free check-down.</p>
-        <div class="grok-tags"><span>MTT</span><span>99</span><span>CO</span><span>c-bet</span></div>
-      </article>
-
-      <article class="grok-card discipline">
-        <div class="ord">02 · Discipline</div>
-        <h3>32s vs raise + 3-bet</h3>
-        <div class="grok-meta">MP · 3♥ 2♠ · preflop fold</div>
-        <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">What was my most recent hand live from the DB? Don't sugarcoat it — fold or hero call?</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">MP · 3♥2♠. Raise to 250, then a 3-bet to 500 in front. You muck. −63 chips. No flop. Correct fold.</p>
-          </div>
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">Even suited? People love defending 32s "for the multiway."</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">Suited doesn't print when you're squished by open + 3-bet. That's not scared money — that's stack-preserving discipline. Stay ready for the next orbit.</p>
-          </div>
-        </div>
-        <div class="grok-result neg">−63 chips · stack preserved</div>
-        <p class="grok-take">Weak suited connector doesn't continue here. Mid-stack discipline between aggressive pots.</p>
-        <div class="grok-tags"><span>MTT</span><span>32s</span><span>fold</span><span>3-bet pot</span></div>
-      </article>
-
-      <article class="grok-card pressure">
-        <div class="ord">03 · Pressure</div>
-        <h3>Pocket tens that didn't freeze</h3>
-        <div class="grok-meta">MP · T♠ T♥ · wet A♥ 8♥ K♠</div>
-        <div class="grok-dialogue" role="log" aria-label="Chat excerpt">
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">Walk me through my pocket tens street-by-street — was the barrel on A-K too thin or was I supposed to charge?</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">MP · T♠T♥. You open 1,680, one call. Flop A♥8♥K♠ — wet and scary. You keep firing. Turn 2♠ blank: more heat. River J♠, they fold. +4,226.</p>
-          </div>
-          <div class="msg you">
-            <span class="who">You</span>
-            <p class="bubble">Feels like I could be dead to any ace… why is that good?</p>
-          </div>
-          <div class="msg grok">
-            <span class="who">Grok</span>
-            <p class="bubble">Because passive tens die slowly. You charged the draw, applied pressure on the blank, and won without showdown. Overpair on a scare board — protection plus fold equity. The better side of your game.</p>
-          </div>
-        </div>
-        <div class="grok-result pos">+4,226 chips · no showdown</div>
-        <p class="grok-take">Overpair on a scare board — protection plus pressure. The better side of the game.</p>
-        <div class="grok-tags"><span>MTT</span><span>TT</span><span>barrel</span><span>no SD</span></div>
-      </article>
+    <div class="field-entry">
+      <div class="field-entry-head"><h3>01 \u2014 Pocket nines (value)</h3></div>
+      <p class="prose"><b>Ask:</b> \u201CPull the hand right before my pocket tens \u2014 full streets, not a one-liner. Was I too passive or did I print?\u201D</p>
+      <p class="prose"><b>Grok:</b> Cutoff 9\u26639\u2666. Raised preflop, one caller. Flop 7\u2666 A\u2660 5\u2665 (dry). You raised again; villain folded. <b>+2,528 chips</b> without showdown.</p>
+      <p class="prose"><b>Coach:</b> Standard open, well-timed barrel on a dry A-high board. Selective preflop + aggression with a real hand.</p>
     </div>
 
-    <div class="field-entry" style="margin-top:2rem">
+    <div class="field-entry">
+      <div class="field-entry-head"><h3>02 \u2014 32s (discipline)</h3></div>
+      <p class="prose"><b>Ask:</b> \u201CWhat was my most recent hand live from the DB? Don\u2019t sugarcoat it \u2014 fold or hero call?\u201D</p>
+      <p class="prose"><b>Grok:</b> Middle position 3\u26652\u2660. Raise and 3-bet in front. You fold. <b>\u221263 chips</b> (antes/blinds only). No board.</p>
+      <p class="prose"><b>Coach:</b> Correct. Suited connectors that weak don\u2019t continue vs raise + 3-bet. Exactly the fold that keeps a playable stack alive.</p>
+    </div>
+
+    <div class="field-entry">
+      <div class="field-entry-head"><h3>03 \u2014 Pocket tens (pressure)</h3></div>
+      <p class="prose"><b>Ask:</b> \u201CWalk me through my pocket tens street-by-street \u2014 was the barrel on A-K too thin or was I supposed to charge?\u201D</p>
+      <p class="prose"><b>Grok:</b> Middle position T\u2660T\u2665. Raised preflop, got called. Flop A\u2665 8\u2665 K\u2660 \u2014 you kept firing. Turn blank, more pressure. River: villain folds. <b>+4,226 chips</b>.</p>
+      <p class="prose"><b>Coach:</b> Solid aggressive line with an overpair on a dangerous board. Semi-bluff / protection, not free cards for draws.</p>
+    </div>
+
+    <div class="field-entry">
       <div class="field-entry-head"><h3>Why this matters</h3></div>
-      <p class="prose">Same orbit: print value when ahead, dump trash without drama, apply pressure when the board gets scary. The coach isn't guessing — it's querying your hands, times, and results.</p>
+      <p class="prose">Same orbit: print value when ahead, dump trash without drama, apply pressure when the board gets scary. The coach isn\u2019t guessing \u2014 it\u2019s querying <em>your</em> hands, times, and results through the LeakSnipe MCP.</p>
       <p class="prose">Units stay honest: these are <b>tournament chips</b>, not dollars. Cash and MTT never get mixed in the instrument.</p>
     </div>
   </div>
@@ -1769,9 +1375,9 @@ footer .foot-loop b {
 <!-- ================= DETAIL: THE LOOP ================= -->
 <section class="view detail-panel" id="view-loop" role="tabpanel" aria-labelledby="tab-loop" tabindex="-1" hidden>
   <div class="wrap">
-    <button class="back-link" data-nav="overview">← Overview</button>
+    <button class="back-link" data-nav="overview">\u2190 Overview</button>
     <div class="detail-head">
-      <span class="eyebrow">Field manual · Section 01</span>
+      <span class="eyebrow">Field manual \xB7 Section 01</span>
       <h2>Five stages.<br>Nothing skips a step.</h2>
       <p class="prose">Every hand you play passes through the same pipeline before it becomes a lesson. <strong>Track</strong> puts it on record; <strong>Improve</strong> is the only stage allowed to change how you play the next one.</p>
     </div>
@@ -1780,35 +1386,35 @@ footer .foot-loop b {
         <div class="field-entry">
           <div class="field-entry-head"><span class="num">01</span><h3>Track</h3></div>
           <div class="prose">
-            <p>Hand histories import the moment your poker client writes them to disk. LeakSnipe watches your BetACR/ACR hand-history and tournament-summary folders directly — auto-discovered on first launch, no path-hunting required — and layers in CoinPoker, GGPoker, PokerStars, 888poker, Ignition, and ReplayPoker alongside.</p>
+            <p>Hand histories import the moment your poker client writes them to disk. LeakSnipe watches your BetACR/ACR hand-history and tournament-summary folders directly \u2014 auto-discovered on first launch, no path-hunting required \u2014 and layers in CoinPoker, GGPoker, PokerStars, 888poker, Ignition, and ReplayPoker alongside.</p>
             <p>Every hand lands in a local SQLite database behind versioned migrations, so the schema can grow without ever touching the hands you've already imported. Watching runs incrementally in the background, and re-scanning a folder never double-counts a hand you've already logged.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><span class="num">02</span><h3>Find</h3></div>
           <div class="prose">
-            <p>A hand you can't find is a hand you can't learn from. Every import is indexed on hero cards, board, result, position, table, date, and any tag you attach — so "show me every 3-bet pot I lost from the cutoff in the last two weeks" is a filter, not an afternoon.</p>
+            <p>A hand you can't find is a hand you can't learn from. Every import is indexed on hero cards, board, result, position, table, date, and any tag you attach \u2014 so "show me every 3-bet pot I lost from the cutoff in the last two weeks" is a filter, not an afternoon.</p>
             <p>Click a hand for its stat line. Double-click for the replayer.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><span class="num">03</span><h3>Review</h3></div>
           <div class="prose">
-            <p>The replayer walks every street in order — actions, bet sizing, pot growth — with a toggle to show or hide opponent hole cards, so you can test a read before you know if it was right.</p>
+            <p>The replayer walks every street in order \u2014 actions, bet sizing, pot growth \u2014 with a toggle to show or hide opponent hole cards, so you can test a read before you know if it was right.</p>
             <p>Away from the replay, the live HUD does the same reading in real time: a Windows overlay that anchors to your BetACR tournament tables, rotates seats around you as players sit and leave, and surfaces position-scoped VPIP/PFR badges you can lock into click-through mode or drag into place once and forget.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><span class="num">04</span><h3>Study</h3></div>
           <div class="prose">
-            <p>Once a spot is isolated, LeakSnipe hands it to the theory engine. Range Studio holds a full 13×13 matrix with mixed-frequency actions, custom action colors, side-by-side range comparison, and saved charts you can reuse.</p>
-            <p>The Monte Carlo equity engine runs No-Limit Hold'em, Omaha Hi-Lo 8-or-better, seven-card stud, and stud hi-lo, with multiway pot odds and tournament ante support built in — not bolted on. A CFR+ solver handles small exact and abstracted subgames, backed by a lightweight neural value net trained on the samples it generates, and stack-depth charts run 5BB through 100BB so a push/fold decision at 12BB isn't answered with 40BB math.</p>
+            <p>Once a spot is isolated, LeakSnipe hands it to the theory engine. Range Studio holds a full 13\xD713 matrix with mixed-frequency actions, custom action colors, side-by-side range comparison, and saved charts you can reuse.</p>
+            <p>The Monte Carlo equity engine runs No-Limit Hold'em, Omaha Hi-Lo 8-or-better, seven-card stud, and stud hi-lo, with multiway pot odds and tournament ante support built in \u2014 not bolted on. A CFR+ solver handles small exact and abstracted subgames, backed by a lightweight neural value net trained on the samples it generates, and stack-depth charts run 5BB through 100BB so a push/fold decision at 12BB isn't answered with 40BB math.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><span class="num">05</span><h3>Improve</h3></div>
           <div class="prose">
-            <p>This is the only stage that writes back. Leak alerts and positional summaries turn a hunch — "I think I'm too loose from the blinds" — into a number with a sample size attached, and the same classification engine that profiles your opponents runs against your own game too.</p>
+            <p>This is the only stage that writes back. Leak alerts and positional summaries turn a hunch \u2014 "I think I'm too loose from the blinds" \u2014 into a number with a sample size attached, and the same classification engine that profiles your opponents runs against your own game too.</p>
             <p>Fix the leak, and the next hand you play starts the loop over at Track.</p>
           </div>
         </div>
@@ -1820,49 +1426,49 @@ footer .foot-loop b {
 <!-- ================= DETAIL: INTELLIGENCE ================= -->
 <section class="view detail-panel" id="view-intelligence" role="tabpanel" aria-labelledby="tab-intelligence" tabindex="-1" hidden>
   <div class="wrap">
-    <button class="back-link" data-nav="overview">← Overview</button>
+    <button class="back-link" data-nav="overview">\u2190 Overview</button>
     <div class="detail-head">
-      <span class="eyebrow">Field manual · Section 02</span>
+      <span class="eyebrow">Field manual \xB7 Section 02</span>
       <h2>The coach queries.<br>It doesn't guess.</h2>
-      <p class="prose">Every answer is the output of a real function call against real data — the hand history, the equity engine, or the live desktop database itself. Nothing here is a cached write-up waiting to be recited.</p>
+      <p class="prose">Every answer is the output of a real function call against real data \u2014 the hand history, the equity engine, or the live desktop database itself. Nothing here is a cached write-up waiting to be recited.</p>
     </div>
     <div class="detail-layout">
       <div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>How a question becomes an answer</h3></div>
           <div class="prose">
-            <p>Ask a question and the coach doesn't reach into a pre-written script — it reaches for a tool. <strong>get_player_stats</strong> pulls career VPIP/PFR/AF/WTSD/fold-to-cbet/3-bet straight from the database, broken out by position. <strong>search_hands</strong> and <strong>get_hand</strong> pull the exact hands behind a claim. <strong>calculate_equity</strong> runs the real Monte Carlo engine instead of estimating a percentage from memory. <strong>run_cfr_solver</strong> and <strong>predict_value</strong> reach for the solver and the neural value net for spots that need more than a hand count. <strong>web_search</strong> is there too, but only for outside strategy context — it's never asked to substitute for your own numbers.</p>
+            <p>Ask a question and the coach doesn't reach into a pre-written script \u2014 it reaches for a tool. <strong>get_player_stats</strong> pulls career VPIP/PFR/AF/WTSD/fold-to-cbet/3-bet straight from the database, broken out by position. <strong>search_hands</strong> and <strong>get_hand</strong> pull the exact hands behind a claim. <strong>calculate_equity</strong> runs the real Monte Carlo engine instead of estimating a percentage from memory. <strong>run_cfr_solver</strong> and <strong>predict_value</strong> reach for the solver and the neural value net for spots that need more than a hand count. <strong>web_search</strong> is there too, but only for outside strategy context \u2014 it's never asked to substitute for your own numbers.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>Local by default, cloud when it's worth it</h3></div>
           <div class="prose">
-            <p>Routine analysis — a hand review, a quick stat pull — runs through whichever provider is configured, with local Ollama models available as a no-key fallback so nothing is ever fully blocked on an API key. Provider choice is yours: Anthropic, OpenAI, Gemini, DeepSeek, or ASI:One, switchable without losing the coach's memory of you.</p>
+            <p>Routine analysis \u2014 a hand review, a quick stat pull \u2014 runs through whichever provider is configured, with local Ollama models available as a no-key fallback so nothing is ever fully blocked on an API key. Provider choice is yours: Anthropic, OpenAI, Gemini, DeepSeek, or ASI:One, switchable without losing the coach's memory of you.</p>
             <p>That memory is durable, not just conversational. Sessions carry forward per player profile, so a leak flagged last week doesn't need to be re-explained this week.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>One database, three places, one source of truth</h3></div>
           <div class="prose">
-            <p>The desktop SQLite file is authoritative. Every hand it imports mirrors out to Cloudflare object storage as raw JSON and into a relational index for fast lookups by player or position — both updated the moment the hand lands, not on a nightly batch.</p>
+            <p>The desktop SQLite file is authoritative. Every hand it imports mirrors out to Cloudflare object storage as raw JSON and into a relational index for fast lookups by player or position \u2014 both updated the moment the hand lands, not on a nightly batch.</p>
             <p>For anything that needs the live number, not a synced one, a bearer-token-gated tunnel connects straight to the desktop database itself, so a query run from your phone reads the same table your HUD is reading from right now.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>Reachable anywhere Claude is</h3></div>
           <div class="prose">
-            <p>The whole surface is exposed as a standard MCP connector — no bespoke app, no separate login. Add it once in Claude's connector settings and the coach has the same database access whether you're at your desk mid-session or asking from the rail on your phone.</p>
+            <p>The whole surface is exposed as a standard MCP connector \u2014 no bespoke app, no separate login. Add it once in Claude's connector settings and the coach has the same database access whether you're at your desk mid-session or asking from the rail on your phone.</p>
           </div>
         </div>
         <div class="terminal scope" style="margin-top:2.5rem;">
           <span class="tick tl"></span><span class="tick tr"></span><span class="tick bl"></span><span class="tick br"></span>
-          <div class="t-head"><span>leaksnipe · coach session</span><span>live query</span></div>
-          <div class="q">am I good to call here — 9s6h on Jd3hAs, facing a pot-sized bet?</div>
-          <div class="sys">calculate_equity hero=9s6h board=Jd3hAs villain_range=cbet-range…</div>
-          <div class="a">22.4% equity against a standard c-bet range on this texture. You need about 33% to call profitably at pot odds this size — this isn't close, it's a fold.</div>
+          <div class="t-head"><span>leaksnipe \xB7 coach session</span><span>live query</span></div>
+          <div class="q">am I good to call here \u2014 9s6h on Jd3hAs, facing a pot-sized bet?</div>
+          <div class="sys">calculate_equity hero=9s6h board=Jd3hAs villain_range=cbet-range\u2026</div>
+          <div class="a">22.4% equity against a standard c-bet range on this texture. You need about 33% to call profitably at pot odds this size \u2014 this isn't close, it's a fold.</div>
           <div class="q">what's my fold-to-cbet from the big blind?</div>
-          <div class="sys">querying player_position_facts…</div>
-          <div class="a">57% — high. Standard from the BB specifically sits closer to 45% <span class="cursor"></span></div>
+          <div class="sys">querying player_position_facts\u2026</div>
+          <div class="a">57% \u2014 high. Standard from the BB specifically sits closer to 45% <span class="cursor"></span></div>
         </div>
       </div>
     </div>
@@ -1872,24 +1478,24 @@ footer .foot-loop b {
 <!-- ================= DETAIL: ARCHITECTURE ================= -->
 <section class="view detail-panel" id="view-architecture" role="tabpanel" aria-labelledby="tab-architecture" tabindex="-1" hidden>
   <div class="wrap">
-    <button class="back-link" data-nav="overview">← Overview</button>
+    <button class="back-link" data-nav="overview">\u2190 Overview</button>
     <div class="detail-head">
-      <span class="eyebrow">Field manual · Section 03</span>
+      <span class="eyebrow">Field manual \xB7 Section 03</span>
       <h2>Local-first.<br>Synced by design.</h2>
-      <p class="prose">The desktop database is the only copy that matters. Everything else — object storage, the relational mirror, the live tunnel — exists to make that one file reachable, never to replace it.</p>
+      <p class="prose">The desktop database is the only copy that matters. Everything else \u2014 object storage, the relational mirror, the live tunnel \u2014 exists to make that one file reachable, never to replace it.</p>
     </div>
     <div class="detail-layout with-rail">
       <div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>The desktop shell</h3></div>
           <div class="prose">
-            <p>A Tauri application wraps a React interface around a Python analysis engine, running as a local sidecar over a REST API. Hand parsing, equity calculation, the CFR solver, and the coach's tool-calling all live in that Python layer — the desktop shell is the window onto it, not a separate implementation.</p>
+            <p>A Tauri application wraps a React interface around a Python analysis engine, running as a local sidecar over a REST API. Hand parsing, equity calculation, the CFR solver, and the coach's tool-calling all live in that Python layer \u2014 the desktop shell is the window onto it, not a separate implementation.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>The live HUD</h3></div>
           <div class="prose">
-            <p>The primary live HUD runs as a separate Windows overlay — a pywin32 layer that predates the Tauri shell and remains the more battle-tested path for BetACR tournament tables. It anchors to the table window, rotates seats to keep you oriented as players join and leave, and supports a locked click-through mode alongside free dragging with persistent offsets per seat layout. A Tauri overlay exists too, but it's marked experimental on purpose — the two are never meant to run at once.</p>
+            <p>The primary live HUD runs as a separate Windows overlay \u2014 a pywin32 layer that predates the Tauri shell and remains the more battle-tested path for BetACR tournament tables. It anchors to the table window, rotates seats to keep you oriented as players join and leave, and supports a locked click-through mode alongside free dragging with persistent offsets per seat layout. A Tauri overlay exists too, but it's marked experimental on purpose \u2014 the two are never meant to run at once.</p>
           </div>
         </div>
         <div class="field-entry">
@@ -1901,13 +1507,13 @@ footer .foot-loop b {
         <div class="field-entry">
           <div class="field-entry-head"><h3>The connector</h3></div>
           <div class="prose">
-            <p>The MCP surface is a single Cloudflare Worker speaking the Model Context Protocol directly — no session infrastructure beyond what the protocol itself needs. It registers cleanly as a connector without requiring a real login flow, because there's exactly one user it's ever meant to serve.</p>
+            <p>The MCP surface is a single Cloudflare Worker speaking the Model Context Protocol directly \u2014 no session infrastructure beyond what the protocol itself needs. It registers cleanly as a connector without requiring a real login flow, because there's exactly one user it's ever meant to serve.</p>
           </div>
         </div>
         <div class="field-entry">
           <div class="field-entry-head"><h3>The database proxy</h3></div>
           <div class="prose">
-            <p>The one endpoint that reaches back to the desktop is deliberately narrow: read-only, bearer-token gated, and restricted to SELECT and schema-inspection queries — nothing that touches this table can write to it. A named tunnel carries that traffic from the public connector straight to the sidecar running on the desktop, so "live" means the actual file on disk, not a copy of it.</p>
+            <p>The one endpoint that reaches back to the desktop is deliberately narrow: read-only, bearer-token gated, and restricted to SELECT and schema-inspection queries \u2014 nothing that touches this table can write to it. A named tunnel carries that traffic from the public connector straight to the sidecar running on the desktop, so "live" means the actual file on disk, not a copy of it.</p>
           </div>
         </div>
       </div>
@@ -1931,11 +1537,11 @@ footer .foot-loop b {
 <!-- ================= DETAIL: LEAK DETECTION ================= -->
 <section class="view detail-panel" id="view-leaks" role="tabpanel" aria-labelledby="tab-leaks" tabindex="-1" hidden>
   <div class="wrap">
-    <button class="back-link" data-nav="overview">← Overview</button>
+    <button class="back-link" data-nav="overview">\u2190 Overview</button>
     <div class="detail-head">
-      <span class="eyebrow">Field manual · Section 04</span>
+      <span class="eyebrow">Field manual \xB7 Section 04</span>
       <h2>Six stats.<br>Every position.</h2>
-      <p class="prose">The same six categories every serious tracker watches, scoped to the seat you were actually sitting in — because a leak invisible in the aggregate is often glaring at one specific position.</p>
+      <p class="prose">The same six categories every serious tracker watches, scoped to the seat you were actually sitting in \u2014 because a leak invisible in the aggregate is often glaring at one specific position.</p>
     </div>
     <div class="detail-layout">
       <div>
@@ -1943,21 +1549,21 @@ footer .foot-loop b {
           <div class="gloss-entry">
             <div class="term">VPIP</div>
             <div class="def">
-              <p>Voluntarily Put Money In Pot — how often you enter a pot by any means besides the blinds.</p>
+              <p>Voluntarily Put Money In Pot \u2014 how often you enter a pot by any means besides the blinds.</p>
               <p class="why">Too high and you're playing hands that don't belong in your range. Too low and you're leaving winnable pots on the table.</p>
             </div>
           </div>
           <div class="gloss-entry">
             <div class="term">PFR</div>
             <div class="def">
-              <p>Pre-Flop Raise — how often you raise before the flop, as a subset of VPIP.</p>
+              <p>Pre-Flop Raise \u2014 how often you raise before the flop, as a subset of VPIP.</p>
               <p class="why">The gap between VPIP and PFR is your calling frequency. A wide gap usually means too many limps and flat-calls with hands that wanted to raise or fold.</p>
             </div>
           </div>
           <div class="gloss-entry">
             <div class="term">AF</div>
             <div class="def">
-              <p>Aggression Factor — the ratio of your bets and raises to your calls, postflop.</p>
+              <p>Aggression Factor \u2014 the ratio of your bets and raises to your calls, postflop.</p>
               <p class="why">Low AF plays passive and predictable. Unusually high AF can mean over-bluffing a range that doesn't support it.</p>
             </div>
           </div>
@@ -1971,7 +1577,7 @@ footer .foot-loop b {
           <div class="gloss-entry">
             <div class="term">WTSD</div>
             <div class="def">
-              <p>Went To Showdown — how often a hand you saw the flop with ends at showdown.</p>
+              <p>Went To Showdown \u2014 how often a hand you saw the flop with ends at showdown.</p>
               <p class="why">Read alongside money won at showdown to tell a calling-station leak apart from a hand that legitimately kept improving.</p>
             </div>
           </div>
@@ -1987,7 +1593,7 @@ footer .foot-loop b {
         <div class="field-entry" style="margin-top:1rem;">
           <div class="field-entry-head"><h3>Scoped by position, not just by hero</h3></div>
           <div class="prose">
-            <p>Every stat above is broken out across all seven standard positions — UTG, MP, HJ, CO, BTN, SB, BB — because the same career VPIP can hide a BB that's folding far too much and a BTN that's opening far too wide. Alerts carry their own sample size, so a spike off twelve hands doesn't get flagged the same way a leak confirmed over three hundred does. The classification engine behind it — auto-typed, refinable by hand if you disagree — is the same one profiling your opponents, pointed at your own game.</p>
+            <p>Every stat above is broken out across all seven standard positions \u2014 UTG, MP, HJ, CO, BTN, SB, BB \u2014 because the same career VPIP can hide a BB that's folding far too much and a BTN that's opening far too wide. Alerts carry their own sample size, so a spike off twelve hands doesn't get flagged the same way a leak confirmed over three hundred does. The classification engine behind it \u2014 auto-typed, refinable by hand if you disagree \u2014 is the same one profiling your opponents, pointed at your own game.</p>
           </div>
         </div>
 
@@ -2067,403 +1673,188 @@ footer .foot-loop b {
   var initial = (location.hash || '').replace('#', '');
   activate(navTargets.indexOf(initial) !== -1 ? initial : 'overview', { pushHash: false, scrollTop: false });
 })();
-</script>
-</body>
-</html>`;
-
-class McpServer {
-  constructor() {
-    this.tools = new Map();
-    this.dbBaseUrl = 'https://db.leaksnipe.win';
+<\/script>
+`;
+var McpServer = class {
+  static {
+    __name(this, "McpServer");
   }
-
+  constructor() {
+    this.tools = /* @__PURE__ */ new Map();
+    this.dbBaseUrl = "https://db.leaksnipe.win";
+  }
   registerTool(name, schema, handler) {
     this.tools.set(name, { schema, handler });
   }
-
   async handleRequest(request, env) {
     const url = new URL(request.url);
-
-    if (url.pathname === '/mcp' && request.method === 'POST') {
+    if (url.pathname === "/mcp" && request.method === "POST") {
       const body = await request.json();
       const { jsonrpc, id, method, params } = body;
-
-      if (method === 'initialize') {
+      if (method === "initialize") {
         return new Response(JSON.stringify({
-          jsonrpc: '2.0', id,
+          jsonrpc: "2.0",
+          id,
           result: {
-            protocolVersion: '2024-11-05',
+            protocolVersion: "2024-11-05",
             capabilities: { tools: {}, resources: {} },
-            serverInfo: { name: 'leaksnipe-mcp', version: '1.2.0' }
+            serverInfo: { name: "leaksnipe-mcp", version: "1.2.0" }
           }
-        }), { headers: { 'Content-Type': 'application/json' } });
+        }), { headers: { "Content-Type": "application/json" } });
       }
-
-      if (method === 'tools/list') {
+      if (method === "tools/list") {
         const toolsList = Array.from(this.tools.entries()).map(([name, t]) => ({
-          name, description: t.schema.description,
-          inputSchema: { type: 'object', properties: t.schema.properties, required: t.schema.required || [] }
+          name,
+          description: t.schema.description,
+          inputSchema: { type: "object", properties: t.schema.properties, required: t.schema.required || [] }
         }));
-        return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { tools: toolsList } }),
-          { headers: { 'Content-Type': 'application/json' } });
+        return new Response(
+          JSON.stringify({ jsonrpc: "2.0", id, result: { tools: toolsList } }),
+          { headers: { "Content-Type": "application/json" } }
+        );
       }
-
-      if (method === 'tools/call') {
+      if (method === "tools/call") {
         const { name, arguments: args } = params;
         const tool = this.tools.get(name);
         if (!tool) {
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Tool not found' } }),
-            { headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Tool not found" } }),
+            { headers: { "Content-Type": "application/json" } }
+          );
         }
         try {
           const result = await tool.handler(args, env);
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] } }),
-            { headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } }),
+            { headers: { "Content-Type": "application/json" } }
+          );
         } catch (err) {
-          return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32603, message: err.message } }),
-            { headers: { 'Content-Type': 'application/json' } });
+          return new Response(
+            JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32603, message: err.message } }),
+            { headers: { "Content-Type": "application/json" } }
+          );
         }
       }
-
-      return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } }),
-        { headers: { 'Content-Type': 'application/json' } });
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } }),
+        { headers: { "Content-Type": "application/json" } }
+      );
     }
-
-    if (url.pathname === '/health') {
-      return new Response(JSON.stringify({ status: 'ok', server: 'leaksnipe-mcp', version: '1.2.0', db_proxy: this.dbBaseUrl }),
-        { headers: { 'Content-Type': 'application/json' } });
+    if (url.pathname === "/health") {
+      return new Response(
+        JSON.stringify({ status: "ok", server: "leaksnipe-mcp", version: "1.2.0", db_proxy: this.dbBaseUrl }),
+        { headers: { "Content-Type": "application/json" } }
+      );
     }
-
-    // Live ingest from sync_hands.py — stores the raw hand in appropriate storage
-    // based on content type and access patterns, with intelligent tiering.
-    if (url.pathname === '/hands' && request.method === 'POST') {
+    if (url.pathname === "/hands" && request.method === "POST") {
       let body;
       try {
         body = await request.json();
       } catch {
-        return new Response(JSON.stringify({ error: 'Invalid JSON body' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Invalid JSON body" }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
       if (!body.key || !body.content) {
-        return new Response(JSON.stringify({ error: 'Need key and content' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+        return new Response(JSON.stringify({ error: "Need key and content" }), { status: 400, headers: { "Content-Type": "application/json" } });
       }
-
-      // Extract hand metadata to determine content type and storage strategy
-      let meta = null;
-      let handDate = null;
-      try {
-        meta = extractHandMeta(body.key, body.content);
-        if (meta && meta.date) {
-          handDate = new Date(meta.date);
-        }
-      } catch (e) {
-        // If we can't parse metadata, create minimal metadata
-        meta = { source_key: body.key, game_type: null, stakes: null, date: null, players: [], site: null };
-        handDate = new Date(); // Default to now for age calculations
-      }
-
-      // Determine content type for specialized routing
-      const contentType = determineContentType(body.key, body.content, meta);
-
-      // Store in appropriate storage based on content type
-      let storedInR2 = false;
-      let storedInKV = false;
-      let targetBucket = null;
-      let targetBucketBinding = '';
-      let storagePath = '';
-
-      switch (contentType) {
-        case 'hand_history':
-          // Route hand histories to tiered R2 storage based on age/access patterns
-          const tierInfo = determineStorageTier(meta, handDate);
-          targetBucketBinding = tierInfo.binding;
-          targetBucket = env[targetBucketBinding];
-          storagePath = `${tierInfo.prefix}${body.key}`;
-
-          if (targetBucket) {
-            await targetBucket.put(storagePath, body.content);
-            storedInR2 = true;
-          } else {
-            // Fallback to main bucket
-            await env.HAND_HISTORY_R2.put(body.key, body.content);
-            storedInR2 = true;
-            storagePath = body.key;
-            targetBucketBinding = 'HAND_HISTORY_R2';
-          }
-          break;
-
-        case 'ai_output':
-          // Store AI outputs (CFR, MCTS, leak reports) in AI outputs bucket
-          await env.R2_AI_OUTPUTS.put(`ai/${body.key}`, body.content);
-          storedInR2 = true;
-          targetBucketBinding = 'R2_AI_OUTPUTS';
-          storagePath = `ai/${body.key}`;
-          break;
-
-        case 'media':
-          // Store media (screenshots, charts, exports) in media bucket
-          await env.R2_MEDIA.put(`media/${body.key}`, body.content);
-          storedInR2 = true;
-          targetBucketBinding = 'R2_MEDIA';
-          storagePath = `media/${body.key}`;
-          break;
-
-        case 'backup':
-          // Store backups in backup bucket
-          await env.R2_BACKUPS.put(`backup/${body.key}`, body.content);
-          storedInR2 = true;
-          targetBucketBinding = 'R2_BACKUPS';
-          storagePath = `backup/${body.key}`;
-          break;
-
-        default:
-          // Default to KV storage for small metadata, configs, etc.
-          if (body.content.length < 1024 * 128) { // < 128KB
-            await env.HAND_META.put(`meta:${body.key}`, body.content);
-            storedInKV = true;
-          } else {
-            // Large items go to main hand history bucket
-            await env.HAND_HISTORY_R2.put(body.key, body.content);
-            storedInR2 = true;
-            targetBucketBinding = 'HAND_HISTORY_R2';
-            storagePath = body.key;
-          }
-          break;
-      }
-
-      // Always update/enhance KV metadata for discoverability and tracking
+      await env.HAND_HISTORY_R2.put(body.key, body.content);
       let indexed = false;
       try {
+        const meta = extractHandMeta(body.key, body.content);
         if (meta) {
-          // Enhance metadata with storage info
-          const enhancedMeta = {
-            ...meta,
-            source_key: body.key,
-            stored_at: new Date().toISOString(),
-            content_type: contentType,
-            size_bytes: body.content.length,
-            access_count: 0, // Initialize access counter
-            last_accessed: null,
-            schema_version: 2
-          };
-
-          // Add storage location info
-          if (storedInR2) {
-            enhancedMeta.storage_location = 'r2';
-            enhancedMeta.r2_bucket = targetBucketBinding;
-            enhancedMeta.r2_key = storagePath;
-          } else if (storedInKV) {
-            enhancedMeta.storage_location = 'kv';
-            enhancedMeta.kv_key = `meta:${body.key}`;
-          }
-
-          // Store enhanced metadata in HAND_META namespace
-          await env.HAND_META.put(`meta:${body.key}`, JSON.stringify(enhancedMeta), {
-            metadata: enhancedMeta
-          });
+          meta.bucket = "leaksnipe-hand-histories";
+          meta.size = body.content.length;
+          await env.HAND_HISTORY_KV.put(`meta:leaksnipe-hand-histories:${body.key}`, JSON.stringify(meta), { metadata: meta });
           indexed = true;
         }
       } catch (e) {
-        // Non-fatal — the object is safely stored either way
-        console.warn('Metadata indexing failed:', e.message);
       }
-
-      // For hot/frequently accessed items, also cache in HOT_CACHE namespace
-      if (shouldCacheHot(body.key, body.content, meta, contentType)) {
-        try {
-          await env.HOT_CACHE.put(`hot:${body.key}`, body.content, {
-            expirationTtl: 3600 // 1 hour TTL for hot cache
-          });
-        } catch (e) {
-          console.warn('Hot caching failed:', e.message);
-        }
-      }
-
-      return new Response(JSON.stringify({
-        uploaded: body.key,
-        content_type: contentType,
-        storage_location: storedInR2 ? 'r2' : storedInKV ? 'kv' : 'unknown',
-        target_bucket: targetBucketBinding || (storedInKV ? 'HAND_META' : 'unknown'),
-        storage_path: storagePath,
-        indexed: indexed,
-        cached_hot: shouldCacheHot(body.key, body.content, meta, contentType) ? true : false
-      }), { headers: { 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({ uploaded: body.key, indexed }), { headers: { "Content-Type": "application/json" } });
     }
-
-    // Root path gets a friendly identity check; everything else (including
-    // OAuth discovery paths like /.well-known/oauth-protected-resource) must
-    // be a real 404 — this server needs no auth, and a spec-compliant client
-    // treats 404 on those paths as "no OAuth here, connect directly." A 200
-    // with a non-JSON body (the old behavior) instead breaks the client's
-    // auth-discovery parse and surfaces as "failed to start mcp authorization".
-    if (url.pathname === '/') {
-      return new Response(LANDING_HTML, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0', 'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store' } });
+    if (url.pathname === "/") {
+      return new Response(LANDING_HTML, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
-    return new Response('Not found', { status: 404 });
+    return new Response("Not found", { status: 404 });
   }
-}
-
-const server = new McpServer();
-
-// All buckets that hold hand-history JSON objects.
-// `binding` must match a wrangler R2 binding name on this worker's env.
-const HAND_HISTORY_BUCKETS = [
-  // Main storage buckets
-  { alias: 'leaksnipe-hand-histories', binding: 'HAND_HISTORY_R2' },
-  { alias: 'poker-hand-histories', binding: 'R2_POKER_HH' },
-  { alias: 'poker-hands', binding: 'R2_POKER_HANDS' },
-  // Tiered storage buckets for lifecycle management
-  { alias: 'leaksnipe-hand-histories-hot', binding: 'HAND_HISTORY_HOT' },
-  { alias: 'leaksnipe-hand-histories-warm', binding: 'HAND_HISTORY_WARM' },
-  { alias: 'leaksnipe-hand-histories-cold', binding: 'HAND_HISTORY_COLD' },
-  // Specialized storage buckets
-  { alias: 'leaksnipe-ai-outputs', binding: 'R2_AI_OUTPUTS' },
-  { alias: 'leaksnipe-media', binding: 'R2_MEDIA' },
-  { alias: 'leaksnipe-backups', binding: 'R2_BACKUPS' },
+};
+var server = new McpServer();
+var HAND_HISTORY_BUCKETS = [
+  { alias: "leaksnipe-hand-histories", binding: "HAND_HISTORY_R2" },
+  { alias: "poker-hand-histories", binding: "R2_POKER_HH" },
+  { alias: "poker-hands", binding: "R2_POKER_HANDS" }
 ];
-
-// ===== CLOUDFLARE STORAGE TOOLS =====
-
-server.registerTool('list_hand_histories', {
-  description: 'List all hand history metadata from KV',
-  properties: { limit: { type: 'number', description: 'Max results' }, prefix: { type: 'string', description: 'Filter prefix' } },
+server.registerTool("list_hand_histories", {
+  description: "List all hand history metadata from KV",
+  properties: { limit: { type: "number", description: "Max results" }, prefix: { type: "string", description: "Filter prefix" } },
   required: []
 }, async (args, env) => {
-  const { limit = 50, prefix = '' } = args || {};
-  const list = await env.HAND_META.list({ prefix: prefix || 'meta:', limit });
+  const { limit = 50, prefix = "" } = args || {};
+  const list = await env.HAND_HISTORY_KV.list({ prefix: prefix || "meta:", limit });
   return {
     count: list.keys.length,
-    histories: list.keys.map(k => {
+    histories: list.keys.map((k) => {
       const meta = k.metadata || {};
       return {
-        id: meta.source_key || k.name.replace('meta:', ''),
+        id: meta.source_key || k.name.replace("meta:", ""),
         bucket: meta.bucket || null,
-        storage_location: meta.storage_location || null,
-        ...meta,
+        ...meta
       };
-    }),
+    })
   };
 });
-
-server.registerTool('get_hand_history', {
-  description: 'Get a hand history by ID from KV metadata',
-  properties: { id: { type: 'string' } },
-  required: ['id']
+server.registerTool("get_hand_history", {
+  description: "Get a hand history by ID from KV",
+  properties: { id: { type: "string" } },
+  required: ["id"]
 }, async (args, env) => {
   const { id } = args;
-  const metaData = await env.HAND_META.get(`meta:${id}`);
-  if (!metaData) throw new Error('Hand history metadata not found: ' + id);
-
-  const meta = JSON.parse(metaData);
-
-  // Fetch the actual data from the appropriate storage location
-  if (meta.storage_location === 'r2' && meta.r2_bucket && meta.r2_key) {
-    // Get from R2
-    let r2Bucket;
-    switch (meta.r2_bucket) {
-      case 'HAND_HISTORY_HOT': r2Bucket = env.HAND_HISTORY_HOT; break;
-      case 'HAND_HISTORY_WARM': r2Bucket = env.HAND_HISTORY_WARM; break;
-      case 'HAND_HISTORY_COLD': r2Bucket = env.HAND_HISTORY_COLD; break;
-      case 'R2_AI_OUTPUTS': r2Bucket = env.R2_AI_OUTPUTS; break;
-      case 'R2_MEDIA': r2Bucket = env.R2_MEDIA; break;
-      case 'R2_BACKUPS': r2Bucket = env.R2_BACKUPS; break;
-      case 'HAND_HISTORY_R2': r2Bucket = env.HAND_HISTORY_R2; break;
-      case 'R2_POKER_HH': r2Bucket = env.R2_POKER_HH; break;
-      case 'R2_POKER_HANDS': r2Bucket = env.R2_POKER_HANDS; break;
-      default: r2Bucket = env.HAND_HISTORY_R2; // fallback
-    }
-
-    if (!r2Bucket) throw new Error('R2 bucket not found: ' + meta.r2_bucket);
-
-    const obj = await r2Bucket.get(meta.r2_key);
-    if (!obj) throw new Error('Hand history object not found in R2: ' + meta.r2_key);
-    const text = await obj.text();
-    return JSON.parse(text);
-  } else if (meta.storage_location === 'kv' && meta.kv_key) {
-    // Get from KV
-    const data = await env.HAND_META.get(meta.kv_key);
-    if (!data) throw new Error('Hand history data not found in KV: ' + meta.kv_key);
-    return JSON.parse(data);
-  } else {
-    // Fallback: try to construct from metadata alone (for backwards compatibility)
-    return meta;
-  }
+  const data = await env.HAND_HISTORY_KV.get("hh:" + id);
+  if (!data) throw new Error("Hand history not found: " + id);
+  return JSON.parse(data);
 });
-
-server.registerTool('search_by_player', {
-  description: 'Search hand histories by player name in KV metadata',
-  properties: { player: { type: 'string' } },
-  required: ['player']
+server.registerTool("search_by_player", {
+  description: "Search hand histories by player name in KV metadata",
+  properties: { player: { type: "string" } },
+  required: ["player"]
 }, async (args, env) => {
   const { player } = args;
-  const list = await env.HAND_META.list({ prefix: 'meta:' });
+  const list = await env.HAND_HISTORY_KV.list({ prefix: "meta:" });
   const matches = [];
   for (const key of list.keys) {
     const meta = key.metadata;
     if (meta && Array.isArray(meta.players) && meta.players.includes(player)) {
       matches.push({
-        id: meta.source_key || key.name.replace('meta:', ''),
+        id: meta.source_key || key.name.replace("meta:", ""),
         bucket: meta.bucket || null,
-        storage_location: meta.storage_location || null,
-        ...meta,
+        ...meta
       });
     }
   }
   return { player, matches: matches.length, histories: matches };
 });
-
-server.registerTool('upload_hand_history_meta', {
-  description: 'Upload hand history metadata to KV',
-  properties: { id: { type: 'string' }, game_type: { type: 'string' }, stakes: { type: 'string' }, players: { type: 'array', items: { type: 'string' } }, date: { type: 'string' } },
-  required: ['id']
+server.registerTool("upload_hand_history_meta", {
+  description: "Register hand history metadata in KV",
+  properties: { id: { type: "string" }, game_type: { type: "string" }, stakes: { type: "string" }, players: { type: "array", items: { type: "string" } }, date: { type: "string" } },
+  required: ["id"]
 }, async (args, env) => {
   const { id, ...meta } = args;
-  await env.HAND_META.put('meta:' + id, JSON.stringify(meta), { metadata: meta });
-  return { success: true, id, message: 'Metadata registered' };
+  await env.HAND_HISTORY_KV.put("meta:" + id, JSON.stringify(meta), { metadata: meta });
+  return { success: true, id, message: "Metadata registered" };
 });
-
-server.registerTool('store_hand_history', {
-  description: 'Store full hand history data in KV (for backward compatibility)',
-  properties: { id: { type: 'string' }, data: { type: 'object' } },
-  required: ['id', 'data']
+server.registerTool("store_hand_history", {
+  description: "Store full hand history data in KV",
+  properties: { id: { type: "string" }, data: { type: "object" } },
+  required: ["id", "data"]
 }, async (args, env) => {
   const { id, data } = args;
-  await env.HAND_META.put('hh:' + id, JSON.stringify(data));
+  await env.HAND_HISTORY_KV.put("hh:" + id, JSON.stringify(data));
   return { success: true, id, size: JSON.stringify(data).length };
 });
-
-server.registerTool('get_large_hand_history', {
-  description: 'Get large hand history file from R2 (checks all tiers)',
-  properties: { key: { type: 'string' } },
-  required: ['key']
+server.registerTool("get_large_hand_history", {
+  description: "Get large hand history file from R2",
+  properties: { key: { type: "string" } },
+  required: ["key"]
 }, async (args, env) => {
   const { key } = args;
-
-  // Check tiered buckets first (hot/warm/cold) with prefixed keys
-  const tieredBuckets = [
-    { binding: 'HAND_HISTORY_HOT', prefix: 'hot/', alias: 'leaksnipe-hand-histories-hot' },
-    { binding: 'HAND_HISTORY_WARM', prefix: 'warm/', alias: 'leaksnipe-hand-histories-warm' },
-    { binding: 'HAND_HISTORY_COLD', prefix: 'cold/', alias: 'leaksnipe-hand-histories-cold' }
-  ];
-
-  for (const bucketCfg of tieredBuckets) {
-    const r2 = env[bucketCfg.binding];
-    if (!r2) continue;
-    const tieredKey = bucketCfg.prefix + key;
-    const obj = await r2.get(tieredKey);
-    if (obj) {
-      const text = await obj.text();
-      return {
-        key,
-        bucket: bucketCfg.alias,
-        tier: bucketCfg.alias.includes('-hot') ? 'hot' :
-              bucketCfg.alias.includes('-warm') ? 'warm' : 'cold',
-        size: obj.size,
-        content: text.substring(0, 5000) + (text.length > 5000 ? '... [truncated]' : ''),
-      };
-    }
-  }
-
-  // Fall back to original buckets for backwards compatibility
   for (const bucketCfg of HAND_HISTORY_BUCKETS) {
     const r2 = env[bucketCfg.binding];
     if (!r2) continue;
@@ -2474,90 +1865,23 @@ server.registerTool('get_large_hand_history', {
         key,
         bucket: bucketCfg.alias,
         size: obj.size,
-        content: text.substring(0, 5000) + (text.length > 5000 ? '... [truncated]' : ''),
+        content: text.substring(0, 5e3) + (text.length > 5e3 ? "... [truncated]" : "")
       };
     }
   }
-
-  throw new Error('Object not found in any bucket: ' + key);
+  throw new Error("Object not found in any bucket: " + key);
 });
-
-server.registerTool('store_large_hand_history', {
-  description: 'Store large hand history file in appropriate storage bucket',
-  properties: { key: { type: 'string' }, data: { type: 'string' } },
-  required: ['key', 'data']
+server.registerTool("store_large_hand_history", {
+  description: "Store large hand history file in R2",
+  properties: { key: { type: "string" }, data: { type: "string" } },
+  required: ["key", "data"]
 }, async (args, env) => {
   const { key, data } = args;
-
-  // Determine content type to route to appropriate bucket
-  const contentType = determineContentType(key, data, null); // Simplified for storage function
-
-  let stored = false;
-  let bucketUsed = '';
-  let storagePath = '';
-
-  switch (contentType) {
-    case 'hand_history':
-      // For backward compatibility, still store in main HAND_HISTORY_R2 bucket
-      // The /hands endpoint handles the intelligent routing
-      await env.HAND_HISTORY_R2.put(key, data);
-      stored = true;
-      bucketUsed = 'HAND_HISTORY_R2';
-      storagePath = key;
-      break;
-
-    case 'ai_output':
-      await env.R2_AI_OUTPUTS.put(`ai/${key}`, data);
-      stored = true;
-      bucketUsed = 'R2_AI_OUTPUTS';
-      storagePath = `ai/${key}`;
-      break;
-
-    case 'media':
-      await env.R2_MEDIA.put(`media/${key}`, data);
-      stored = true;
-      bucketUsed = 'R2_MEDIA';
-      storagePath = `media/${key}`;
-      break;
-
-    case 'backup':
-      await env.R2_BACKUPS.put(`backup/${key}`, data);
-      stored = true;
-      bucketUsed = 'R2_BACKUPS';
-      storagePath = `backup/${key}`;
-      break;
-
-    default:
-      // Default to main hand history bucket for unknown types
-      await env.HAND_HISTORY_R2.put(key, data);
-      stored = true;
-      bucketUsed = 'HAND_HISTORY_R2';
-      storagePath = key;
-      break;
-  }
-
-  return {
-    success: true,
-    key,
-    size: data.length,
-    bucket: bucketUsed,
-    path: storagePath,
-    content_type: contentType
-  };
+  await env.HAND_HISTORY_R2.put(key, data);
+  return { success: true, key, size: data.length };
 });
-
-// ===== ADMIN: KV BACKFILL FROM R2 =====
-
-// Each object costs up to 3 sequential subrequests (KV get, R2 get, KV put).
-// 100/bucket x 3 buckets can exceed the Worker's execution time limit and get
-// killed mid-response (looks like a truncated/EOF error to the caller, not a
-// real memory issue). 25 has run reliably in testing; call repeatedly.
-const BACKFILL_BATCH_SIZE = 25;
-// Objects bigger than this are indexed with minimal metadata instead of being
-// parsed — reading a multi-MB (or multi-GB) object into a Worker blows the
-// 128 MB memory limit, and real per-hand JSONs are ~50 KB.
-const BACKFILL_MAX_PARSE_BYTES = 2 * 1024 * 1024;
-
+var BACKFILL_BATCH_SIZE = 25;
+var BACKFILL_MAX_PARSE_BYTES = 2 * 1024 * 1024;
 function extractHandMeta(key, json) {
   let hand;
   try {
@@ -2565,14 +1889,9 @@ function extractHandMeta(key, json) {
   } catch {
     return null;
   }
-  // Real R2 hand exports have no structured players[] array — names only show
-  // up embedded in raw_text as "Seat N: NAME ($stack)". Some newer/synced
-  // records may carry a real players[] array, so prefer that when present.
-  let players = Array.isArray(hand.players)
-    ? hand.players.map((p) => (p && (p.name || p.player_name)) || (typeof p === 'string' ? p : null)).filter(Boolean)
-    : [];
-  if (players.length === 0 && typeof hand.raw_text === 'string') {
-    const seen = new Set();
+  let players = Array.isArray(hand.players) ? hand.players.map((p) => p && (p.name || p.player_name) || (typeof p === "string" ? p : null)).filter(Boolean) : [];
+  if (players.length === 0 && typeof hand.raw_text === "string") {
+    const seen = /* @__PURE__ */ new Set();
     for (const m of hand.raw_text.matchAll(/Seat\s+\d+:\s+(\S+)\s+\(/g)) {
       seen.add(m[1]);
     }
@@ -2584,109 +1903,63 @@ function extractHandMeta(key, json) {
     stakes: hand.stakes || hand.buy_in || null,
     date: hand.date || hand.hand_date || hand.imported_at || null,
     players,
-    site: hand.site || null,
-    // Additional fields we might want to extract
-    hero_cards: hand.hero_cards || null,
-    board_cards: hand.board_cards || null,
-    hero_won: hand.hero_won || null,
-    is_tournament: hand.is_tournament !== undefined ? hand.is_tournament : null
+    site: hand.site || null
   };
 }
-
+__name(extractHandMeta, "extractHandMeta");
 async function backfillBucket(env, bucketCfg, cursor, batch) {
   const r2 = env[bucketCfg.binding];
   if (!r2) return { processed: 0, skipped: 0, cursor: null, done: true, error: `Missing binding ${bucketCfg.binding}` };
-  const list = await r2.list({ cursor: cursor || undefined, limit: batch || BACKFILL_BATCH_SIZE });
+  const list = await r2.list({ cursor: cursor || void 0, limit: batch || BACKFILL_BATCH_SIZE });
   let processed = 0;
   let skipped = 0;
   for (const obj of list.objects) {
-    // For tiered buckets, strip the prefix (hot/, warm/, cold/) to get original key
-    let originalKey = obj.key;
-    let bucketAlias = bucketCfg.alias;
-
-    // Handle tiered bucket prefixes
-    if (bucketAlias === 'leaksnipe-hand-histories-hot' && obj.key.startsWith('hot/')) {
-      originalKey = obj.key.substring(4); // Remove "hot/" prefix
-    } else if (bucketAlias === 'leaksnipe-hand-histories-warm' && obj.key.startsWith('warm/')) {
-      originalKey = obj.key.substring(5); // Remove "warm/" prefix
-    } else if (bucketAlias === 'leaksnipe-hand-histories-cold' && obj.key.startsWith('cold/')) {
-      originalKey = obj.key.substring(5); // Remove "cold/" prefix
+    const kvKey = `meta:${bucketCfg.alias}:${obj.key}`;
+    const existing = await env.HAND_HISTORY_KV.get(kvKey);
+    if (existing) {
+      skipped++;
+      continue;
     }
-
-    const kvKey = `meta:${originalKey}`;
-    const existing = await env.HAND_META.get(kvKey);
-    if (existing) { skipped++; continue; }
     let meta = null;
     if (obj.size <= BACKFILL_MAX_PARSE_BYTES) {
-      const body = await r2.get(obj.key); // Use actual key (with prefix) to fetch from R2
-      if (body) meta = extractHandMeta(originalKey, await body.text()); // Use original key for metadata
+      const body = await r2.get(obj.key);
+      if (body) meta = extractHandMeta(obj.key, await body.text());
     }
     if (!meta) {
-      // Oversized or unparseable — index it anyway so it's findable and the
-      // idempotency check skips it on future runs.
-      meta = { source_key: originalKey, game_type: null, stakes: null, date: null, players: [], site: null, parse_skipped: true };
+      meta = { source_key: obj.key, game_type: null, stakes: null, date: null, players: [], site: null, parse_skipped: true };
     }
     meta.size = obj.size;
-
-    // Enhance metadata with storage info for backfilled items
-    const enhancedMeta = {
-      ...meta,
-      stored_at: new Date().toISOString(),
-      storage_location: 'r2',
-      r2_bucket: bucketCfg.alias,
-      r2_key: obj.key, // Keep the full key with prefix
-      access_count: 0,
-      last_accessed: null,
-      schema_version: 2,
-      content_type: 'hand_history' // Assume hand history for backfilled items
-    };
-
-    // Store enhanced metadata in HAND_META namespace
-    await env.HAND_META.put(kvKey, JSON.stringify(enhancedMeta), {
-      metadata: enhancedMeta
-    });
-    
-    // Also store under short ID format if applicable
-    const handIdMatch = originalKey.match(/hands\/(.+)\.json$/);
-    const handId = handIdMatch ? handIdMatch[1] : null;
-    if (handId) {
-      await env.HAND_META.put(`meta:${handId}`, JSON.stringify(enhancedMeta), {
-        metadata: enhancedMeta
-      });
-    }
-    
+    meta.bucket = bucketCfg.alias;
+    if (Array.isArray(meta.players)) meta.players = meta.players.slice(0, 20);
+    await env.HAND_HISTORY_KV.put(kvKey, JSON.stringify(meta), { metadata: meta });
     processed++;
   }
   return {
     processed,
     skipped,
     cursor: list.truncated ? list.cursor : null,
-    done: !list.truncated,
+    done: !list.truncated
   };
 }
-
-server.registerTool('backfill_kv_from_r2', {
-  description:
-    'ADMIN: index R2 hand-history objects into the HAND_HISTORY_KV meta: namespace so ' +
-    'list_hand_histories / search_by_player can find them. Paginated — call repeatedly, ' +
-    'feeding the returned next_cursors back in as cursors, until done=true. Idempotent: ' +
-    'already-indexed keys are skipped.',
+__name(backfillBucket, "backfillBucket");
+server.registerTool("backfill_kv_from_r2", {
+  description: "ADMIN: index R2 hand-history objects into the HAND_HISTORY_KV meta: namespace so list_hand_histories / search_by_player can find them. Paginated \u2014 call repeatedly, feeding the returned next_cursors back in as cursors, until done=true. Idempotent: already-indexed keys are skipped.",
   properties: {
-    admin_key: { type: 'string', description: 'Must match the BACKFILL_ADMIN_KEY env var' },
-    cursors: { type: 'object', description: 'Per-bucket cursor object from a previous call, e.g. {"poker-hands": "..."}. Omit or {} to start fresh.' },
-    batch: { type: 'number', description: 'Objects per bucket per call (default 100). Lower this if the worker hits subrequest/CPU limits.' },
+    admin_key: { type: "string", description: "Must match the BACKFILL_ADMIN_KEY env var" },
+    cursors: { type: "object", description: 'Per-bucket cursor object from a previous call, e.g. {"poker-hands": "..."}. Omit or {} to start fresh.' },
+    batch: { type: "number", description: "Objects per bucket per call (default 100). Lower this if the worker hits subrequest/CPU limits." }
   },
-  required: ['admin_key'],
+  required: ["admin_key"]
 }, async (args, env) => {
   const { admin_key, cursors = {} } = args || {};
   if (!env.BACKFILL_ADMIN_KEY || admin_key !== env.BACKFILL_ADMIN_KEY) {
-    throw new Error('Unauthorized — admin_key does not match BACKFILL_ADMIN_KEY');
+    throw new Error("Unauthorized \u2014 admin_key does not match BACKFILL_ADMIN_KEY");
   }
   const results = {};
   let anyRemaining = false;
   const batch = args.batch;
   for (const bucketCfg of HAND_HISTORY_BUCKETS) {
-    if (cursors[bucketCfg.alias] === 'DONE') {
+    if (cursors[bucketCfg.alias] === "DONE") {
       results[bucketCfg.alias] = { processed: 0, skipped: 0, cursor: null, done: true };
       continue;
     }
@@ -2698,271 +1971,241 @@ server.registerTool('backfill_kv_from_r2', {
     done: !anyRemaining,
     results,
     next_cursors: Object.fromEntries(
-      Object.entries(results).map(([alias, r]) => [alias, r.done ? 'DONE' : r.cursor])
-    ),
+      Object.entries(results).map(([alias, r]) => [alias, r.done ? "DONE" : r.cursor])
+    )
   };
 });
-
-server.registerTool('write_analytics_event', {
-  description: 'Write a test event to Analytics Engine dataset',
-  properties: {},
-  required: []
-}, async (args, env) => {
-  if (!env.ANALYTICS_DB) throw new Error('ANALYTICS_DB not bound');
-  env.ANALYTICS_DB.writeDataPoint({
-    blobs: ['test_event', 'dummy'],
-    doubles: [1.0],
-    indexes: ['test']
-  });
-  return { success: true, message: 'Analytics event written successfully' };
-});
-
-// ===== TAURI DB PROXY TOOLS =====
-// All proxy to https://db.leaksnipe.win/query, which sits behind two auth
-// layers: Cloudflare Access at the edge (returns 403 without a valid Access
-// Service Token), then the sidecar's own Bearer check (returns 401 without
-// LEAKSNIPE_DB_PROXY_KEY). Both sets of credentials must be set as Worker
-// secrets via `wrangler secret put <NAME>` — never hardcoded here — for
-// CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET, and DB_PROXY_KEY.
 function dbProxyHeaders(env, extra = {}) {
   return {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${env.DB_PROXY_KEY}`,
-    'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
-    'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET,
-    ...extra,
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${env.DB_PROXY_KEY}`,
+    "CF-Access-Client-Id": env.CF_ACCESS_CLIENT_ID,
+    "CF-Access-Client-Secret": env.CF_ACCESS_CLIENT_SECRET,
+    ...extra
   };
 }
-
-server.registerTool('tauri_db_query', {
-  description: 'Send a raw SQL query to the Tauri SQLite database via HTTP proxy',
-  properties: { sql: { type: 'string', description: 'SQL query string' }, params: { type: 'array', description: 'Query parameters' } },
-  required: ['sql']
+__name(dbProxyHeaders, "dbProxyHeaders");
+server.registerTool("tauri_db_query", {
+  description: "Send a raw SQL query to the Tauri SQLite database via HTTP proxy",
+  properties: { sql: { type: "string", description: "SQL query string" }, params: { type: "array", description: "Query parameters" } },
+  required: ["sql"]
 }, async (args, env) => {
   const { sql, params = [] } = args;
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('tauri_db_tables', {
-  description: 'List all tables in the Tauri SQLite database',
+server.registerTool("tauri_db_tables", {
+  description: "List all tables in the Tauri SQLite database",
   properties: {},
   required: []
 }, async (args, env) => {
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql: "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name" })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status);
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status);
   return await resp.json();
 });
-
-server.registerTool('tauri_db_schema', {
-  description: 'Get schema for a specific table',
-  properties: { table: { type: 'string', description: 'Table name' } },
-  required: ['table']
+server.registerTool("tauri_db_schema", {
+  description: "Get schema for a specific table",
+  properties: { table: { type: "string", description: "Table name" } },
+  required: ["table"]
 }, async (args, env) => {
   const { table } = args;
   const sql = "PRAGMA table_info(" + table + ")";
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status);
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status);
   return await resp.json();
 });
-
-server.registerTool('tauri_db_player_stats', {
-  description: 'Get career HUD stats (VPIP/PFR/AF/WTSD/3-bet, plus a positional breakdown) for a specific player from the Tauri DB',
-  properties: { player: { type: 'string' } },
-  required: ['player']
+server.registerTool("tauri_db_player_stats", {
+  description: "Get career HUD stats (VPIP/PFR/AF/WTSD/3-bet, plus a positional breakdown) for a specific player from the Tauri DB",
+  properties: { player: { type: "string" } },
+  required: ["player"]
 }, async (args, env) => {
   const { player } = args;
-  const dbQuery = async (sql, params) => {
-    const resp = await fetch('https://db.leaksnipe.win/query', {
-      method: 'POST',
+  const dbQuery = /* @__PURE__ */ __name(async (sql, params) => {
+    const resp = await fetch("https://db.leaksnipe.win/query", {
+      method: "POST",
       headers: dbProxyHeaders(env),
-      body: JSON.stringify({ sql, params }),
+      body: JSON.stringify({ sql, params })
     });
-    if (!resp.ok) throw new Error('DB query failed: ' + resp.status);
+    if (!resp.ok) throw new Error("DB query failed: " + resp.status);
     return resp.json();
-  };
+  }, "dbQuery");
   const career = await dbQuery(
-    'SELECT name, site, auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet, updated_at FROM player_types WHERE lower(name) = lower(?)',
+    "SELECT name, site, auto_type, manual_type, hands, vpip, pfr, af, fold_cbet, wtsd, three_bet, updated_at FROM player_types WHERE lower(name) = lower(?)",
     [player]
   );
   const positions = await dbQuery(
-    'SELECT position, COUNT(*) AS hands, SUM(vpip) AS vpip_hands, SUM(pfr) AS pfr_hands FROM player_position_facts WHERE lower(player) = lower(?) GROUP BY position',
+    "SELECT position, COUNT(*) AS hands, SUM(vpip) AS vpip_hands, SUM(pfr) AS pfr_hands FROM player_position_facts WHERE lower(player) = lower(?) GROUP BY position",
     [player]
   );
   const by_position = (positions.results || []).map((row) => ({
     position: row.position,
     hands: row.hands,
     vpip: row.hands ? Number((100 * row.vpip_hands / row.hands).toFixed(1)) : 0,
-    pfr: row.hands ? Number((100 * row.pfr_hands / row.hands).toFixed(1)) : 0,
+    pfr: row.hands ? Number((100 * row.pfr_hands / row.hands).toFixed(1)) : 0
   }));
   const player_row = (career.results || [])[0] || null;
   if (!player_row) return { player, found: false };
   return { player, found: true, ...player_row, by_position };
 });
-
-server.registerTool('tauri_db_hands', {
-  description: 'Get recent hands from the Tauri DB with optional filters',
-  properties: { player: { type: 'string' }, game_type: { type: 'string' }, limit: { type: 'number' } },
+server.registerTool("tauri_db_hands", {
+  description: "Get recent hands from the Tauri DB with optional filters",
+  properties: { player: { type: "string" }, game_type: { type: "string" }, limit: { type: "number" } },
   required: []
 }, async (args, env) => {
   const { player, game_type, limit = 50 } = args || {};
-  let sql = 'SELECT * FROM hands WHERE 1=1';
+  let sql = "SELECT * FROM hands WHERE 1=1";
   const params = [];
-  if (player) { sql += ' AND hand_id IN (SELECT hand_id FROM players WHERE name = ?)'; params.push(player); }
-  if (game_type) { sql += ' AND game_type = ?'; params.push(game_type); }
-  sql += ' ORDER BY date DESC LIMIT ?'; params.push(limit);
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  if (player) {
+    sql += " AND hand_id IN (SELECT hand_id FROM players WHERE name = ?)";
+    params.push(player);
+  }
+  if (game_type) {
+    sql += " AND game_type = ?";
+    params.push(game_type);
+  }
+  sql += " ORDER BY date DESC LIMIT ?";
+  params.push(limit);
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status);
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status);
   return await resp.json();
 });
-
-server.registerTool('tauri_db_raw', {
-  description: 'Send raw HTTP request to Tauri DB endpoint (flexible)',
-  properties: { path: { type: 'string', default: '/' }, method: { type: 'string', default: 'GET' }, body: { type: 'object' } },
+server.registerTool("tauri_db_raw", {
+  description: "Send raw HTTP request to Tauri DB endpoint (flexible)",
+  properties: { path: { type: "string", default: "/" }, method: { type: "string", default: "GET" }, body: { type: "object" } },
   required: []
 }, async (args, env) => {
-  const { path = '/', method = 'GET', body } = args || {};
+  const { path = "/", method = "GET", body } = args || {};
   const opts = { method, headers: dbProxyHeaders(env) };
-  if (body && method !== 'GET') opts.body = JSON.stringify(body);
-  const resp = await fetch('https://db.leaksnipe.win' + path, opts);
+  if (body && method !== "GET") opts.body = JSON.stringify(body);
+  const resp = await fetch("https://db.leaksnipe.win" + path, opts);
   const text = await resp.text();
-  try { return { status: resp.status, data: JSON.parse(text) }; } catch { return { status: resp.status, text }; }
+  try {
+    return { status: resp.status, data: JSON.parse(text) };
+  } catch {
+    return { status: resp.status, text };
+  }
 });
-
-// Helper for parsing card patterns like "QQ", "AKs", etc.
 function parseCardPattern(term) {
   if (!term) return null;
   const t = term.toLowerCase();
-  // Pocket pairs (e.g. qq)
   if (/^[2-9tjqka]{2}$/.test(t) && t[0] === t[1]) {
     return {
-      sql: 'SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?',
+      sql: "SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?",
       params: [t[0], t[0]]
     };
   }
-  // Suited/offsuit (e.g. aks, 76o)
   if (/^[2-9tjqka]{2}[so]$/.test(t)) {
     const r1 = t[0];
     const r2 = t[1];
     const type = t[2];
-    const suitCompare = type === 's' ? '=' : '!=';
+    const suitCompare = type === "s" ? "=" : "!=";
     return {
       sql: `((SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?) OR (SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?)) AND SUBSTR(hero_cards, 2, 1) ${suitCompare} SUBSTR(hero_cards, 5, 1)`,
       params: [r1, r2, r2, r1]
     };
   }
-  // Ranks combination (e.g. ak, 76)
   if (/^[2-9tjqka]{2}$/.test(t)) {
     const r1 = t[0];
     const r2 = t[1];
     return {
-      sql: '((SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?) OR (SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?))',
+      sql: "((SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?) OR (SUBSTR(LOWER(hero_cards), 1, 1) = ? AND SUBSTR(LOWER(hero_cards), 4, 1) = ?))",
       params: [r1, r2, r2, r1]
     };
   }
-  // Exact cards (e.g. ahkd)
   if (/^[2-9tjqka][cdhs][2-9tjqka][cdhs]$/.test(t)) {
     const c1 = t.slice(0, 2);
     const c2 = t.slice(2, 4);
     return {
-      sql: '((SUBSTR(LOWER(hero_cards), 1, 2) = ? AND SUBSTR(LOWER(hero_cards), 4, 2) = ?) OR (SUBSTR(LOWER(hero_cards), 1, 2) = ? AND SUBSTR(LOWER(hero_cards), 4, 2) = ?))',
+      sql: "((SUBSTR(LOWER(hero_cards), 1, 2) = ? AND SUBSTR(LOWER(hero_cards), 4, 2) = ?) OR (SUBSTR(LOWER(hero_cards), 1, 2) = ? AND SUBSTR(LOWER(hero_cards), 4, 2) = ?))",
       params: [c1, c2, c2, c1]
     };
   }
   return null;
 }
-
-server.registerTool('get_recent_hands', {
-  description: 'Returns the most recent hands played by the user',
+__name(parseCardPattern, "parseCardPattern");
+server.registerTool("get_recent_hands", {
+  description: "Returns the most recent hands played by the user",
   properties: {
-    limit: { type: 'number', description: 'Maximum number of hands to return', default: 10 },
-    since: { type: 'string', description: 'ISO timestamp or date string to get hands after' }
+    limit: { type: "number", description: "Maximum number of hands to return", default: 10 },
+    since: { type: "string", description: "ISO timestamp or date string to get hands after" }
   },
   required: []
 }, async (args, env) => {
   const { limit = 10, since } = args || {};
-  let sql = 'SELECT * FROM hands WHERE 1=1';
+  let sql = "SELECT * FROM hands WHERE 1=1";
   const params = [];
   if (since) {
-    sql += ' AND date > ?';
+    sql += " AND date > ?";
     params.push(since);
   }
-  sql += ' ORDER BY date DESC LIMIT ?';
+  sql += " ORDER BY date DESC LIMIT ?";
   params.push(limit);
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('get_hands_by_cards', {
+server.registerTool("get_hands_by_cards", {
   description: 'Returns hands containing specific hole cards (e.g. "QQ", "AKs", "76s", "AhKd")',
   properties: {
-    cards: { type: 'string', description: 'Card pattern like "QQ", "AKs", "76o", "AhKd"' },
-    limit: { type: 'number', description: 'Maximum number of hands to return', default: 10 }
+    cards: { type: "string", description: 'Card pattern like "QQ", "AKs", "76o", "AhKd"' },
+    limit: { type: "number", description: "Maximum number of hands to return", default: 10 }
   },
-  required: ['cards']
+  required: ["cards"]
 }, async (args, env) => {
   const { cards, limit = 10 } = args;
   const pattern = parseCardPattern(cards);
-  if (!pattern) throw new Error('Invalid cards pattern: ' + cards);
-
+  if (!pattern) throw new Error("Invalid cards pattern: " + cards);
   const sql = `SELECT * FROM hands WHERE ${pattern.sql} ORDER BY date DESC LIMIT ?`;
   const params = [...pattern.params, limit];
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('get_biggest_winning_hands', {
-  description: 'Returns the biggest winning hands by profit',
+server.registerTool("get_biggest_winning_hands", {
+  description: "Returns the biggest winning hands by profit",
   properties: {
-    limit: { type: 'number', description: 'Maximum number of hands to return', default: 10 }
+    limit: { type: "number", description: "Maximum number of hands to return", default: 10 }
   },
   required: []
 }, async (args, env) => {
   const { limit = 10 } = args || {};
-  const sql = 'SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?';
+  const sql = "SELECT * FROM hands WHERE hero_won > 0 ORDER BY hero_won DESC LIMIT ?";
   const params = [limit];
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('get_winrate_by_position', {
-  description: 'Returns winrate statistics broken down by position',
+server.registerTool("get_winrate_by_position", {
+  description: "Returns winrate statistics broken down by position",
   properties: {},
   required: []
 }, async (args, env) => {
@@ -2977,244 +2220,222 @@ server.registerTool('get_winrate_by_position', {
     GROUP BY hero_position
     ORDER BY total_profit DESC
   `;
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params: [] })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('get_hands_by_position', {
-  description: 'Returns recent hands played in a specific position',
+server.registerTool("get_hands_by_position", {
+  description: "Returns recent hands played in a specific position",
   properties: {
-    position: { type: 'string', description: 'Position like "BTN", "CO", "SB", "BB", "EP", "MP"' },
-    limit: { type: 'number', description: 'Maximum number of hands to return', default: 10 }
+    position: { type: "string", description: 'Position like "BTN", "CO", "SB", "BB", "EP", "MP"' },
+    limit: { type: "number", description: "Maximum number of hands to return", default: 10 }
   },
-  required: ['position']
+  required: ["position"]
 }, async (args, env) => {
   const { position, limit = 10 } = args;
-  const sql = 'SELECT * FROM hands WHERE UPPER(hero_position) = UPPER(?) ORDER BY date DESC LIMIT ?';
+  const sql = "SELECT * FROM hands WHERE UPPER(hero_position) = UPPER(?) ORDER BY date DESC LIMIT ?";
   const params = [position, limit];
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('search_hands', {
+server.registerTool("search_hands", {
   description: 'Search hands using natural keywords (e.g. "BTN", "won", "tournament", "QQ", tag names)',
   properties: {
-    query: { type: 'string', description: 'Search keywords like "BTN won QQ", "bluff", "NL50"' },
-    limit: { type: 'number', description: 'Maximum number of hands to return', default: 10 }
+    query: { type: "string", description: 'Search keywords like "BTN won QQ", "bluff", "NL50"' },
+    limit: { type: "number", description: "Maximum number of hands to return", default: 10 }
   },
-  required: ['query']
+  required: ["query"]
 }, async (args, env) => {
   const { query, limit = 10 } = args;
-  let sql = 'SELECT * FROM hands WHERE 1=1';
+  let sql = "SELECT * FROM hands WHERE 1=1";
   const params = [];
-  const terms = query.toLowerCase().replace(/[^a-z0-9\s><=-]/g, '').split(/\s+/).filter(Boolean);
-
+  const terms = query.toLowerCase().replace(/[^a-z0-9\s><=-]/g, "").split(/\s+/).filter(Boolean);
   for (const term of terms) {
-    // 1. Position match
-    if (['btn', 'sb', 'bb', 'co', 'mp', 'ep', 'utg'].includes(term)) {
-      sql += ' AND UPPER(hero_position) = ?';
+    if (["btn", "sb", "bb", "co", "mp", "ep", "utg"].includes(term)) {
+      sql += " AND UPPER(hero_position) = ?";
       params.push(term.toUpperCase());
       continue;
     }
-
-    // 2. Won/Lost match
-    if (['won', 'win', 'winning'].includes(term)) {
-      sql += ' AND hero_won > 0';
+    if (["won", "win", "winning"].includes(term)) {
+      sql += " AND hero_won > 0";
       continue;
     }
-    if (['lost', 'lose', 'losing'].includes(term)) {
-      sql += ' AND hero_won < 0';
+    if (["lost", "lose", "losing"].includes(term)) {
+      sql += " AND hero_won < 0";
       continue;
     }
-
-    // 3. Tournament/Cash match
-    if (['tournament', 'tourney', 'mtt'].includes(term)) {
-      sql += ' AND is_tournament = 1';
+    if (["tournament", "tourney", "mtt"].includes(term)) {
+      sql += " AND is_tournament = 1";
       continue;
     }
-    if (['cash', 'ring'].includes(term)) {
-      sql += ' AND is_tournament = 0';
+    if (["cash", "ring"].includes(term)) {
+      sql += " AND is_tournament = 0";
       continue;
     }
-
-    // 4. Cards match
     const cardPattern = parseCardPattern(term);
     if (cardPattern) {
       sql += ` AND ${cardPattern.sql}`;
       params.push(...cardPattern.params);
       continue;
     }
-
-    // 5. General match (Tag, table, source, hand_number)
-    sql += ' AND (hand_id IN (SELECT hand_id FROM hand_tags WHERE LOWER(tag) LIKE ?) OR LOWER(source_file) LIKE ? OR LOWER(table_name) LIKE ? OR hand_number = ?)';
-    const likeVal = '%' + term + '%';
+    sql += " AND (hand_id IN (SELECT hand_id FROM hand_tags WHERE LOWER(tag) LIKE ?) OR LOWER(source_file) LIKE ? OR LOWER(table_name) LIKE ? OR hand_number = ?)";
+    const likeVal = "%" + term + "%";
     params.push(likeVal, likeVal, likeVal, term);
   }
-
-  sql += ' ORDER BY date DESC LIMIT ?';
+  sql += " ORDER BY date DESC LIMIT ?";
   params.push(limit);
-
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
+  const resp = await fetch("https://db.leaksnipe.win/query", {
+    method: "POST",
     headers: dbProxyHeaders(env),
     body: JSON.stringify({ sql, params })
   });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("DB query failed: " + resp.status + " " + await resp.text());
   return await resp.json();
 });
-
-server.registerTool('get_sessions_winrate', {
-  description: 'Calculate poker sessions dynamically based on gap minutes and return session winrate, profit, and duration.',
+server.registerTool("get_sessions_winrate", {
+  description: "Calculate poker sessions dynamically based on gap minutes and return session winrate, profit, and duration.",
   properties: {
-    site: { type: 'string', description: 'Filter by poker site (e.g. "CoinPoker", "BetACR")' },
-    gap_minutes: { type: 'number', description: 'Minutes gap between hands to define a new session (default 30)', default: 30 },
-    limit: { type: 'number', description: 'Max sessions to return (default 10)', default: 10 }
+    site: { type: "string", description: 'Filter by poker site (e.g. "CoinPoker", "BetACR")' },
+    gap_minutes: { type: "number", description: "Minutes gap between hands to define a new session (default 30)", default: 30 },
+    limit: { type: "number", description: "Max sessions to return (default 10)", default: 10 }
   },
   required: []
 }, async (args, env) => {
-  const resp = await fetch('https://db.leaksnipe.win/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const resp = await fetch("https://db.leaksnipe.win/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: 1,
-      method: 'tools/call',
+      method: "tools/call",
       params: {
-        name: 'get_sessions_winrate',
+        name: "get_sessions_winrate",
         arguments: args
       }
     })
   });
-  if (!resp.ok) throw new Error('Local MCP call failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("Local MCP call failed: " + resp.status + " " + await resp.text());
   const json = await resp.json();
   if (json.error) throw new Error(json.error.message);
   return json.result.content;
 });
-
-server.registerTool('run_network_command', {
-  description: 'Execute network diagnostics and tools (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac) on the local machine.',
+server.registerTool("run_network_command", {
+  description: "Execute network diagnostics and tools (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac) on the local machine.",
   properties: {
-    command: { type: 'string', description: 'Network tool to run (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac)' },
-    args: { type: 'array', items: { type: 'string' }, description: 'List of arguments to pass to the command' }
+    command: { type: "string", description: "Network tool to run (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac)" },
+    args: { type: "array", items: { type: "string" }, description: "List of arguments to pass to the command" }
   },
-  required: ['command']
+  required: ["command"]
 }, async (args, env) => {
-  const resp = await fetch('https://db.leaksnipe.win/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const resp = await fetch("https://db.leaksnipe.win/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: 1,
-      method: 'tools/call',
+      method: "tools/call",
       params: {
-        name: 'run_network_command',
+        name: "run_network_command",
         arguments: args
       }
     })
   });
-  if (!resp.ok) throw new Error('Local MCP call failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("Local MCP call failed: " + resp.status + " " + await resp.text());
   const json = await resp.json();
   if (json.error) throw new Error(json.error.message);
   return json.result.content;
 });
-
-server.registerTool('run_cloudflare_command', {
-  description: 'Execute Cloudflare wrangler or cloudflared commands on the local machine to inspect configuration, tunnels, D1, or R2.',
+server.registerTool("run_cloudflare_command", {
+  description: "Execute Cloudflare wrangler or cloudflared commands on the local machine to inspect configuration, tunnels, D1, or R2.",
   properties: {
-    command: { type: 'string', description: 'Command to execute (wrangler, cloudflared)' },
-    args: { type: 'array', items: { type: 'string' }, description: 'Arguments to pass' },
-    sub_project: { type: 'string', description: 'Working directory context to run wrangler command (root, mcp-server, cloudflare-api, poker-daemon-worker)', default: 'root' }
+    command: { type: "string", description: "Command to execute (wrangler, cloudflared)" },
+    args: { type: "array", items: { type: "string" }, description: "Arguments to pass" },
+    sub_project: { type: "string", description: "Working directory context to run wrangler command (root, mcp-server, cloudflare-api, poker-daemon-worker)", default: "root" }
   },
-  required: ['command', 'args']
+  required: ["command", "args"]
 }, async (args, env) => {
-  const resp = await fetch('https://db.leaksnipe.win/mcp', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+  const resp = await fetch("https://db.leaksnipe.win/mcp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: 1,
-      method: 'tools/call',
+      method: "tools/call",
       params: {
-        name: 'run_cloudflare_command',
+        name: "run_cloudflare_command",
         arguments: args
       }
     })
   });
-  if (!resp.ok) throw new Error('Local MCP call failed: ' + resp.status + ' ' + await resp.text());
+  if (!resp.ok) throw new Error("Local MCP call failed: " + resp.status + " " + await resp.text());
   const json = await resp.json();
   if (json.error) throw new Error(json.error.message);
   return json.result.content;
 });
-
-// ── Cloud D1 coaching depth (works even when desktop tunnel is offline) ──────
-
-const COACHING_SCHEMA = {
+var COACHING_SCHEMA = {
   databases: {
     poker_hands: {
       tables: {
         hands: {
-          description: 'Hand histories. hero_won is USD for cash (is_tournament=0) and tournament CHIPS for MTT (is_tournament=1). Never mix units.',
-          columns: ['hand_id','site','hand_number','date','game_type','is_tournament','tournament_id','buy_in','table_name','max_seats','button_seat','hero_cards','board_cards','pot','rake','hero_won','hero_position','raw_text','source_file','imported_at'],
+          description: "Hand histories. hero_won is USD for cash (is_tournament=0) and tournament CHIPS for MTT (is_tournament=1). Never mix units.",
+          columns: ["hand_id", "site", "hand_number", "date", "game_type", "is_tournament", "tournament_id", "buy_in", "table_name", "max_seats", "button_seat", "hero_cards", "board_cards", "pot", "rake", "hero_won", "hero_position", "raw_text", "source_file", "imported_at"]
         },
-        players: { description: 'Seats: name, stack, is_hero', columns: ['id','hand_id','seat','name','stack','is_hero'] },
-        actions: { description: 'Street actions with amounts', columns: ['id','hand_id','street','sequence','player','action','amount'] },
-        winners: { description: 'Collected amounts', columns: ['id','hand_id','player_name','amount'] },
-        hand_tags: { description: 'Tags on hands', columns: ['hand_id','tag','created_at'] },
-        player_types: { description: 'HUD sample stats', columns: ['name','site','auto_type','manual_type','hands','vpip','pfr','af','fold_cbet','wtsd','updated_at','three_bet'] },
-        player_position_facts: { description: 'Per-hand VPIP/PFR by position', columns: ['hand_id','player','position','vpip','pfr','updated_at'] },
-        tournament_summaries: { description: 'MTT results', columns: ['tournament_id','site','buy_in_raw','buy_in_value','rake_value','player_count','finish_position','prize','hero_name','imported_at'] },
-        ai_analysis: { description: 'Stored AI coach notes per hand', columns: ['hand_id','llm_provider','play_style','mistakes_found','tags','summary','ev_estimate','raw_response','analyzed_at'] },
-        ocr_imports: { description: 'OCR captures', columns: ['id','image_path','ocr_text','parsed_cards','parsed_pot','parsed_bets','parsed_blinds','notes','hand_id','created_at'] },
-      },
+        players: { description: "Seats: name, stack, is_hero", columns: ["id", "hand_id", "seat", "name", "stack", "is_hero"] },
+        actions: { description: "Street actions with amounts", columns: ["id", "hand_id", "street", "sequence", "player", "action", "amount"] },
+        winners: { description: "Collected amounts", columns: ["id", "hand_id", "player_name", "amount"] },
+        hand_tags: { description: "Tags on hands", columns: ["hand_id", "tag", "created_at"] },
+        player_types: { description: "HUD sample stats", columns: ["name", "site", "auto_type", "manual_type", "hands", "vpip", "pfr", "af", "fold_cbet", "wtsd", "updated_at", "three_bet"] },
+        player_position_facts: { description: "Per-hand VPIP/PFR by position", columns: ["hand_id", "player", "position", "vpip", "pfr", "updated_at"] },
+        tournament_summaries: { description: "MTT results", columns: ["tournament_id", "site", "buy_in_raw", "buy_in_value", "rake_value", "player_count", "finish_position", "prize", "hero_name", "imported_at"] },
+        ai_analysis: { description: "Stored AI coach notes per hand", columns: ["hand_id", "llm_provider", "play_style", "mistakes_found", "tags", "summary", "ev_estimate", "raw_response", "analyzed_at"] },
+        ocr_imports: { description: "OCR captures", columns: ["id", "image_path", "ocr_text", "parsed_cards", "parsed_pot", "parsed_bets", "parsed_blinds", "notes", "hand_id", "created_at"] }
+      }
     },
     coach_memory: {
       tables: {
         coach_memory: {
-          description: 'Cross-session coaching dialogue memory',
-          columns: ['id','hero','kind','user_text','assistant_text','provider','created_at'],
-        },
-      },
-    },
+          description: "Cross-session coaching dialogue memory",
+          columns: ["id", "hero", "kind", "user_text", "assistant_text", "provider", "created_at"]
+        }
+      }
+    }
   },
   heroes: {
-    Gboss101: ['Gboss101', 'GBOSS101', 'gboss101'],
-    jdwalka: ['jdwalka', 'JohnDaWalka', 'Johndawalka'],
+    Gboss101: ["Gboss101", "GBOSS101", "gboss101"],
+    jdwalka: ["jdwalka", "JohnDaWalka", "Johndawalka"]
   },
   units: {
-    cash: 'hero_won and pot are dollars when is_tournament=0',
-    tournament: 'hero_won and pot are chips when is_tournament=1 — never report as $',
-  },
+    cash: "hero_won and pot are dollars when is_tournament=0",
+    tournament: "hero_won and pot are chips when is_tournament=1 \u2014 never report as $"
+  }
 };
-
 async function d1All(env, sql, binds = []) {
-  if (!env.DB) throw new Error('D1 binding DB not configured on this worker');
+  if (!env.DB) throw new Error("D1 binding DB not configured on this worker");
   const stmt = env.DB.prepare(sql);
   const bound = binds.length ? stmt.bind(...binds) : stmt;
   return bound.all();
 }
-
+__name(d1All, "d1All");
 async function d1First(env, sql, binds = []) {
-  if (!env.DB) throw new Error('D1 binding DB not configured on this worker');
+  if (!env.DB) throw new Error("D1 binding DB not configured on this worker");
   const stmt = env.DB.prepare(sql);
   const bound = binds.length ? stmt.bind(...binds) : stmt;
   return bound.first();
 }
-
-server.registerTool('list_full_schemas', {
-  description: 'List ALL coaching database schemas (local + cloud): tables, columns, unit rules for cash vs chips, and hero aliases. Call this first for deep coaching.',
+__name(d1First, "d1First");
+server.registerTool("list_full_schemas", {
+  description: "List ALL coaching database schemas (local + cloud): tables, columns, unit rules for cash vs chips, and hero aliases. Call this first for deep coaching.",
   properties: {},
-  required: [],
+  required: []
 }, async (_args, env) => {
   let d1_tables = [];
   let catalog = [];
@@ -3223,9 +2444,10 @@ server.registerTool('list_full_schemas', {
       const r = await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
       d1_tables = (r.results || []).map((x) => x.name);
       try {
-        const c = await d1All(env, 'SELECT * FROM schema_catalog ORDER BY table_name');
+        const c = await d1All(env, "SELECT * FROM schema_catalog ORDER BY table_name");
         catalog = c.results || [];
-      } catch (_) { /* table may not exist until migration */ }
+      } catch (_) {
+      }
     }
   } catch (e) {
     d1_tables = { error: e.message };
@@ -3235,67 +2457,63 @@ server.registerTool('list_full_schemas', {
     d1_tables,
     schema_catalog: catalog,
     sources: {
-      live_desktop: 'https://db.leaksnipe.win/query (tauri_db_* tools)',
-      cloud_d1: 'env.DB leaksnipe-hands (d1_* tools)',
-      r2_histories: 'HAND_HISTORY_R2 / R2_POKER_* buckets',
-    },
+      live_desktop: "https://db.leaksnipe.win/query (tauri_db_* tools)",
+      cloud_d1: "env.DB leaksnipe-hands (d1_* tools)",
+      r2_histories: "HAND_HISTORY_R2 / R2_POKER_* buckets"
+    }
   };
 });
-
-server.registerTool('d1_list_tables', {
-  description: 'List tables in Cloudflare D1 (leaksnipe-hands) coaching database.',
+server.registerTool("d1_list_tables", {
+  description: "List tables in Cloudflare D1 (leaksnipe-hands) coaching database.",
   properties: {},
-  required: [],
+  required: []
 }, async (_args, env) => {
   const r = await d1All(env, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name");
   return { tables: (r.results || []).map((x) => x.name) };
 });
-
-server.registerTool('d1_describe_table', {
-  description: 'Describe columns for a D1 table (PRAGMA table_info).',
-  properties: { table: { type: 'string', description: 'Table name e.g. hands, ai_analysis, coach_memory' } },
-  required: ['table'],
+server.registerTool("d1_describe_table", {
+  description: "Describe columns for a D1 table (PRAGMA table_info).",
+  properties: { table: { type: "string", description: "Table name e.g. hands, ai_analysis, coach_memory" } },
+  required: ["table"]
 }, async (args, env) => {
-  const table = String(args.table || '').replace(/[^a-zA-Z0-9_]/g, '');
-  if (!table) throw new Error('Invalid table');
+  const table = String(args.table || "").replace(/[^a-zA-Z0-9_]/g, "");
+  if (!table) throw new Error("Invalid table");
   const r = await d1All(env, `PRAGMA table_info(${table})`);
   return { table, columns: r.results || [] };
 });
-
-server.registerTool('d1_query', {
-  description: 'Read-only SELECT against Cloudflare D1 coaching DB. Use for offline coaching when desktop tunnel is down. Never mix cash $ with tournament chips — filter is_tournament.',
+server.registerTool("d1_query", {
+  description: "Read-only SELECT against Cloudflare D1 coaching DB. Use for offline coaching when desktop tunnel is down. Never mix cash $ with tournament chips \u2014 filter is_tournament.",
   properties: {
-    sql: { type: 'string', description: 'SELECT or WITH query only' },
-    params: { type: 'array', description: 'Bound parameters', items: {} },
+    sql: { type: "string", description: "SELECT or WITH query only" },
+    params: { type: "array", description: "Bound parameters", items: {} }
   },
-  required: ['sql'],
+  required: ["sql"]
 }, async (args, env) => {
-  const sql = String(args.sql || '').trim();
+  const sql = String(args.sql || "").trim();
   const lower = sql.toLowerCase();
-  if (!(lower.startsWith('select') || lower.startsWith('with') || lower.startsWith('pragma'))) {
-    throw new Error('Only SELECT/WITH/PRAGMA allowed on D1');
+  if (!(lower.startsWith("select") || lower.startsWith("with") || lower.startsWith("pragma"))) {
+    throw new Error("Only SELECT/WITH/PRAGMA allowed on D1");
   }
-  if (/;/.test(sql.replace(/;+\s*$/, ''))) throw new Error('Multiple statements not allowed');
+  if (/;/.test(sql.replace(/;+\s*$/, ""))) throw new Error("Multiple statements not allowed");
   const r = await d1All(env, sql, args.params || []);
   return { results: r.results || [], meta: r.meta || null };
 });
-
-server.registerTool('d1_hero_overview', {
-  description: 'Hero coaching snapshot from D1: hand counts, cash $ net vs tournament chip net (separated), by site. Heroes: Gboss101 / jdwalka aliases.',
+server.registerTool("d1_hero_overview", {
+  description: "Hero coaching snapshot from D1: hand counts, cash $ net vs tournament chip net (separated), by site. Heroes: Gboss101 / jdwalka aliases.",
   properties: {
-    hero: { type: 'string', description: 'Hero filter: gboss101, jdwalka, or exact name. Empty = all heroes.' },
+    hero: { type: "string", description: "Hero filter: gboss101, jdwalka, or exact name. Empty = all heroes." }
   },
-  required: [],
+  required: []
 }, async (args, env) => {
-  const hero = (args.hero || '').trim().toLowerCase();
-  let nameClause = 'p.is_hero = 1';
+  const hero = (args.hero || "").trim().toLowerCase();
+  let nameClause = "p.is_hero = 1";
   const binds = [];
-  if (hero.includes('gboss')) {
+  if (hero.includes("gboss")) {
     nameClause += " AND lower(p.name) LIKE '%gboss101%'";
-  } else if (hero.includes('jdwalk') || hero.includes('johnda')) {
+  } else if (hero.includes("jdwalk") || hero.includes("johnda")) {
     nameClause += " AND (lower(p.name) LIKE '%jdwalka%' OR lower(p.name) LIKE '%johndawalka%')";
   } else if (hero) {
-    nameClause += ' AND lower(p.name) = lower(?)';
+    nameClause += " AND lower(p.name) = lower(?)";
     binds.push(hero);
   }
   const sql = `
@@ -3313,61 +2531,58 @@ server.registerTool('d1_hero_overview', {
     ORDER BY unit, hands DESC`;
   const r = await d1All(env, sql, binds);
   return {
-    hero: hero || 'all',
-    note: 'cash_usd rows are dollars; tournament_chips rows are chips — never add them together',
-    breakdown: r.results || [],
+    hero: hero || "all",
+    note: "cash_usd rows are dollars; tournament_chips rows are chips \u2014 never add them together",
+    breakdown: r.results || []
   };
 });
-
-server.registerTool('d1_list_ai_analyses', {
-  description: 'List stored AI coach analyses (ai_analysis table) for leak review.',
+server.registerTool("d1_list_ai_analyses", {
+  description: "List stored AI coach analyses (ai_analysis table) for leak review.",
   properties: {
-    limit: { type: 'number', default: 20 },
-    has_mistakes: { type: 'boolean', description: 'Only hands with mistakes_found > 0' },
+    limit: { type: "number", default: 20 },
+    has_mistakes: { type: "boolean", description: "Only hands with mistakes_found > 0" }
   },
-  required: [],
+  required: []
 }, async (args, env) => {
   const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
-  let sql = 'SELECT hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at FROM ai_analysis';
-  if (args.has_mistakes) sql += ' WHERE COALESCE(mistakes_found, 0) > 0';
-  sql += ' ORDER BY analyzed_at DESC LIMIT ?';
+  let sql = "SELECT hand_id, llm_provider, play_style, mistakes_found, tags, summary, ev_estimate, analyzed_at FROM ai_analysis";
+  if (args.has_mistakes) sql += " WHERE COALESCE(mistakes_found, 0) > 0";
+  sql += " ORDER BY analyzed_at DESC LIMIT ?";
   const r = await d1All(env, sql, [limit]);
   return { analyses: r.results || [] };
 });
-
-server.registerTool('d1_coach_memory', {
-  description: 'Read coach_memory dialogue history for a hero (cross-session coaching context).',
+server.registerTool("d1_coach_memory", {
+  description: "Read coach_memory dialogue history for a hero (cross-session coaching context).",
   properties: {
-    hero: { type: 'string', description: 'Hero name filter' },
-    limit: { type: 'number', default: 20 },
+    hero: { type: "string", description: "Hero name filter" },
+    limit: { type: "number", default: 20 }
   },
-  required: [],
+  required: []
 }, async (args, env) => {
   const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
-  const hero = (args.hero || '').trim();
-  let sql = 'SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory';
+  const hero = (args.hero || "").trim();
+  let sql = "SELECT id, hero, kind, user_text, assistant_text, provider, created_at FROM coach_memory";
   const binds = [];
   if (hero) {
-    sql += ' WHERE lower(hero) LIKE lower(?)';
+    sql += " WHERE lower(hero) LIKE lower(?)";
     binds.push(`%${hero}%`);
   }
-  sql += ' ORDER BY created_at DESC LIMIT ?';
+  sql += " ORDER BY created_at DESC LIMIT ?";
   binds.push(limit);
   try {
     const r = await d1All(env, sql, binds);
     return { memories: r.results || [] };
   } catch (e) {
-    return { memories: [], error: e.message, hint: 'Run D1 migration 0002_coaching_tables.sql and re-export coach_memory.db' };
+    return { memories: [], error: e.message, hint: "Run D1 migration 0002_coaching_tables.sql and re-export coach_memory.db" };
   }
 });
-
-server.registerTool('d1_database_summary', {
-  description: 'High-level D1 counts: hands, players, actions, ai_analysis, coach_memory, cash vs tournament split.',
+server.registerTool("d1_database_summary", {
+  description: "High-level D1 counts: hands, players, actions, ai_analysis, coach_memory, cash vs tournament split.",
   properties: {},
-  required: [],
+  required: []
 }, async (_args, env) => {
   const counts = {};
-  for (const t of ['hands', 'players', 'actions', 'winners', 'hand_tags', 'player_types', 'ai_analysis', 'coach_memory', 'tournament_summaries']) {
+  for (const t of ["hands", "players", "actions", "winners", "hand_tags", "player_types", "ai_analysis", "coach_memory", "tournament_summaries"]) {
     try {
       const row = await d1First(env, `SELECT COUNT(*) AS c FROM ${t}`);
       counts[t] = row?.c ?? 0;
@@ -3381,661 +2596,26 @@ server.registerTool('d1_database_summary', {
       ROUND(SUM(hero_won), 2) AS net
       FROM hands GROUP BY is_tournament, site`);
     unit_split = r.results || [];
-  } catch (_) {}
-  return { counts, unit_split, note: 'is_tournament=1 nets are chips; is_tournament=0 nets are USD' };
+  } catch (_) {
+  }
+  return { counts, unit_split, note: "is_tournament=1 nets are chips; is_tournament=0 nets are USD" };
 });
-
-// ===== KV ANALYTICS CACHING LAYER =====
-// Helper function to cache expensive analytics computations in KV for 1 hour
-const ANALYTICS_CACHE_TTL = 3600; // 1 hour in seconds
-
-async function getOrComputeAnalytics(env, cacheKey, computeFn, ttlSeconds = ANALYTICS_CACHE_TTL) {
-  // Try KV cache first (fast, cheap reads)
-  const cached = await env.HAND_HISTORY_KV.get(`analytics:${cacheKey}`, {
-    type: 'json'
-  });
-
-  if (cached) return cached;
-
-  // Compute if not in cache (expensive D1 operation)
-  const result = await computeFn();
-
-  // Store in KV for next hour
-  await env.HAND_HISTORY_KV.put(
-    `analytics:${cacheKey}`,
-    JSON.stringify(result),
-    { expirationTtl: ttlSeconds }
-  );
-
-  return result;
-}
-
-// Helper function to proxy D1 queries through the Tauri DB proxy
-async function d1QueryViaProxy(env, sql, params = []) {
-  const resp = await fetch('https://db.leaksnipe.win/query', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${env.DB_PROXY_KEY}`,
-      'CF-Access-Client-Id': env.CF_ACCESS_CLIENT_ID,
-      'CF-Access-Client-Secret': env.CF_ACCESS_CLIENT_SECRET,
-    },
-    body: JSON.stringify({ sql, params })
-  });
-  if (!resp.ok) throw new Error('DB query failed: ' + resp.status + ' ' + await resp.text());
-  return await resp.json();
-}
-
-// Helper function to determine content type based on key and content
-function determineContentType(key, content, meta) {
-  const keyLower = key.toLowerCase();
-
-  // Check for AI output patterns
-  if (key.includes('cfr') || key.includes('mcts') || key.includes('leak-report') ||
-      key.includes('ai-output') || key.includes('analysis') || key.includes('model')) {
-    return 'ai_output';
-  }
-
-  // Check for media patterns
-  if (key.match(/\.(png|jpg|jpeg|gif|svg|pdf|mp4|mov|avi)$/i) ||
-      key.includes('screenshot') || key.includes('chart') || key.includes('export')) {
-    return 'media';
-  }
-
-  // Check for backup patterns
-  if (key.includes('backup') || key.includes('archive') || key.includes('dump')) {
-    return 'backup';
-  }
-
-  // Check for hand history patterns (most common)
-  if (key.includes('hand') || key.includes('game') || key.includes('session') ||
-      (meta && (meta.game_type || meta.site || meta.players?.length > 0))) {
-    return 'hand_history';
-  }
-
-  // Default to metadata/small data
-  return 'metadata';
-}
-
-// Helper function to determine storage tier for hand histories
-function determineStorageTier(meta, handDate) {
-  const now = new Date();
-  const hoursOld = handDate ? (now - handDate) / (1000 * 60 * 60) : 0; // Convert to hours
-  const daysOld = hoursOld / 24;
-
-  // TODO: In a real implementation, we would check access patterns from metadata
-  // For now, we'll use age-based tiering as a starting point
-
-  if (hoursOld <= 48) {
-    // Very hot: last 48 hours
-    return { binding: 'HAND_HISTORY_HOT', prefix: 'hot/' };
-  } else if (daysOld <= 7) {
-    // Hot: last 7 days
-    return { binding: 'HAND_HISTORY_HOT', prefix: 'hot/' };
-  } else if (daysOld <= 30) {
-    // Warm: 8-30 days
-    return { binding: 'HAND_HISTORY_WARM', prefix: 'warm/' };
-  } else {
-    // Cold: >30 days
-    return { binding: 'HAND_HISTORY_COLD', prefix: 'cold/' };
-  }
-}
-
-// Helper function to determine if something should be hot-cached
-function shouldCacheHot(key, content, meta, contentType) {
-  // Cache hand histories from last 24 hours
-  if (contentType === 'hand_history' && meta && meta.date) {
-    const handDate = new Date(meta.date);
-    const hoursOld = (new Date() - handDate) / (1000 * 60 * 60);
-    if (hoursOld <= 24) return true;
-  }
-
-  // Cache AI outputs and frequently accessed metadata
-  if (contentType === 'ai_output' || contentType === 'media') {
-    return false; // These go to R2 directly, not cached in KV
-  }
-
-  // Cache small, frequently accessed items
-  if (content.length < 10 * 1024) { // < 10KB
-    return true;
-  }
-
-  return false;
-}
-
-server.registerTool('get_player_winrate_cached', {
-  description: 'Get player win rate with KV caching (last 30 days). Computed once per hour.',
-  properties: {
-    playerName: { type: 'string', description: 'Player name to check' },
-    days: { type: 'number', description: 'Number of days to look back', default: 30 }
-  },
-  required: ['playerName']
-}, async (args, env) => {
-  const { playerName, days = 30 } = args;
-
-  return await getOrComputeAnalytics(
-    env,
-    `winrate:${playerName}:${days}`,
-    async () => {
-      const result = await d1QueryViaProxy(env, `
-        SELECT
-          SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as win_rate,
-          COUNT(*) as hands_played,
-          SUM(hero_won) as net_profit,
-          AVG(hero_won) as avg_win_per_hand
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
-        WHERE p.name = ?
-          AND h.date >= datetime('now', '-${days} days')
-      `, [playerName]);
-
-      return result.results?.[0] || {};
-    }
-  );
-});
-
-server.registerTool('get_player_vpip_pfr_by_position_cached', {
-  description: 'Get VPIP/PFR by position for a player with KV caching. Computed once per hour.',
-  properties: {
-    playerName: { type: 'string', description: 'Player name to analyze' },
-    days: { type: 'number', description: 'Number of days to look back', default: 30 }
-  },
-  required: ['playerName']
-}, async (args, env) => {
-  const { playerName, days = 30 } = args;
-
-  return await getOrComputeAnalytics(
-    env,
-    `vpip_pfr_position:${playerName}:${days}`,
-    async () => {
-      const result = await d1QueryViaProxy(env, `
-        SELECT
-          p.position,
-          COUNT(*) as hands,
-          SUM(CASE WHEN EXISTS (
-            SELECT 1 FROM actions a
-            WHERE a.hand_id = h.hand_id
-              AND a.street = 'preflop'
-              AND a.player = p.name
-              AND a.action IN ('call','bet','raise')
-          ) THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as vpip_pct,
-          SUM(CASE WHEN EXISTS (
-            SELECT 1 FROM actions a
-            WHERE a.hand_id = h.hand_id
-              AND a.street = 'preflop'
-              AND a.player = p.name
-              AND a.action IN ('bet','raise')
-          ) THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as pfr_pct
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1
-        WHERE p.name = ?
-          AND h.date >= datetime('now', '-${days} days')
-          AND p.position IS NOT NULL
-        GROUP BY p.position
-        ORDER BY
-          CASE p.position
-            WHEN 'UTG' THEN 1
-            WHEN 'UTG+1' THEN 2
-            WHEN 'UTG+2' THEN 3
-            WHEN 'MP1' THEN 4
-            WHEN 'MP2' THEN 5
-            WHEN 'MP3' THEN 6
-            WHEN 'CO' THEN 7
-            WHEN 'BTN' THEN 8
-            WHEN 'SB' THEN 9
-            WHEN 'BB' THEN 10
-            ELSE 11
-          END
-      `, [playerName]);
-
-      return { position_stats: result.results || [] };
-    }
-  );
-});
-
-server.registerTool('get_session_stats_cached', {
-  description: 'Get session-based statistics (win rate, streaks, best/worst sessions) with KV caching.',
-  properties: {
-    playerName: { type: 'string', description: 'Player name to analyze' },
-    days: { type: 'number', description: 'Number of days to look back', default: 30 },
-    sessionGapHours: { type: 'number', description: 'Hours between hands to define session break', default: 2 }
-  },
-  required: ['playerName']
-}, async (args, env) => {
-  const { playerName, days = 30, sessionGapHours = 2 } = args;
-
-  return await getOrComputeAnalytics(
-    env,
-    `session_stats:${playerName}:${days}:${sessionGapHours}`,
-    async () => {
-      // First get hands for the player
-      const handsResult = await d1QueryViaProxy(env, `
-        SELECT
-          h.hand_id,
-          h.date,
-          h.hero_won,
-          h.is_tournament
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
-        WHERE h.date >= datetime('now', '-${days} days')
-        ORDER BY h.date ASC
-      `, [playerName]);
-
-      const hands = handsResult.results || [];
-
-      if (hands.length === 0) {
-        return {
-          sessions: [],
-          summary: {
-            total_sessions: 0,
-            total_hands: 0,
-            total_profit: 0,
-            avg_session_profit: 0,
-            best_session: null,
-            worst_session: null,
-            current_streak: 0,
-            max_win_streak: 0,
-            max_loss_streak: 0
-          }
-        };
-      }
-
-      // Group hands into sessions based on time gap
-      const sessions = [];
-      let currentSession = {
-        hands: [hands[0]],
-        startTime: new Date(hands[0].date),
-        endTime: new Date(hands[0].date)
-      };
-
-      const sessionGapMs = sessionGapHours * 60 * 60 * 1000;
-
-      for (let i = 1; i < hands.length; i++) {
-        const handTime = new Date(hands[i].date);
-        const prevTime = new Date(hands[i-1].date);
-
-        if (handTime - prevTime <= sessionGapMs) {
-          // Same session
-          currentSession.hands.push(hands[i]);
-          currentSession.endTime = handTime;
-        } else {
-          // New session
-          sessions.push(currentSession);
-          currentSession = {
-            hands: [hands[i]],
-            startTime: handTime,
-            endTime: handTime
-          };
-        }
-      }
-
-      // Don't forget the last session
-      sessions.push(currentSession);
-
-      // Calculate session stats
-      const sessionStats = sessions.map(session => {
-        const hands = session.hands;
-        const totalHands = hands.length;
-        const totalProfit = hands.reduce((sum, h) => sum + h.hero_won, 0);
-        const winRate = totalHands > 0 ? (hands.filter(h => h.hero_won > 0).length / totalHands * 100) : 0;
-
-        return {
-          sessionId: hands[0].hand_id,
-          startTime: session.startTime.toISOString(),
-          endTime: session.endTime.toISOString(),
-          handCount: totalHands,
-          totalProfit: totalProfit,
-          winRate: parseFloat(winRate.toFixed(2)),
-          avgProfitPerHand: totalHands > 0 ? parseFloat((totalProfit / totalHands).toFixed(2)) : 0
-        };
-      });
-
-      // Calculate overall summary
-      const totalHands = hands.length;
-      const totalProfit = hands.reduce((sum, h) => sum + h.hero_won, 0);
-      const overallWinRate = totalHands > 0 ? (hands.filter(h => h.hero_won > 0).length / totalHands * 100) : 0;
-
-      // Calculate streaks
-      let currentStreak = 0;
-      let maxWinStreak = 0;
-      let maxLossStreak = 0;
-      let currentWinStreak = 0;
-      let currentLossStreak = 0;
-
-      for (const hand of hands) {
-        if (hand.hero_won > 0) {
-          currentWinStreak++;
-          currentLossStreak = 0;
-          maxWinStreak = Math.max(maxWinStreak, currentWinStreak);
-        } else if (hand.hero_won < 0) {
-          currentLossStreak++;
-          currentWinStreak = 0;
-          maxLossStreak = Math.max(maxLossStreak, currentLossStreak);
-        } else {
-          // Push (break even) - reset both streaks
-          currentWinStreak = 0;
-          currentLossStreak = 0;
-        }
-      }
-
-      // Determine current streak from end
-      if (hands.length > 0) {
-        if (hands[hands.length - 1].hero_won > 0) {
-          currentStreak = currentWinStreak;
-        } else if (hands[hands.length - 1].hero_won < 0) {
-          currentStreak = -currentLossStreak;
-        } else {
-          currentStreak = 0;
-        }
-      }
-
-      // Find best and worst sessions
-      let bestSession = null;
-      let worstSession = null;
-      if (sessionStats.length > 0) {
-        bestSession = sessionStats.reduce((prev, current) =>
-          (prev.totalProfit > current.totalProfit) ? prev : current
-        );
-        worstSession = sessionStats.reduce((prev, current) =>
-          (prev.totalProfit < current.totalProfit) ? prev : current
-        );
-      }
-
-      return {
-        sessions: sessionStats,
-        summary: {
-          total_sessions: sessions.length,
-          total_hands: totalHands,
-          total_profit: parseFloat(totalProfit.toFixed(2)),
-          total_profit_chips: totalProfit, // For tournament players, this is chips
-          avg_session_profit: sessionStats.length > 0 ?
-            parseFloat((sessionStats.reduce((sum, s) => sum + s.totalProfit, 0) / sessionStats.length).toFixed(2)) : 0,
-          avg_session_profit_chips: sessionStats.length > 0 ?
-            parseFloat((sessionStats.reduce((sum, s) => sum + s.totalProfit, 0) / sessionStats.length).toFixed(2)) : 0,
-          overall_win_rate: parseFloat(overallWinRate.toFixed(2)),
-          best_session: bestSession,
-          worst_session: worstSession,
-          current_streak: currentStreak,
-          max_win_streak: maxWinStreak,
-          max_loss_streak: maxLossStreak
-        }
-      };
-    }
-  );
-});
-
-server.registerTool('get_leak_report_cached', {
-  description: 'Get a comprehensive leak report for a player with KV caching. Computed once per hour.',
-  properties: {
-    playerName: { type: 'string', description: 'Player name to analyze' },
-    days: { type: 'number', description: 'Number of days to look back', default: 30 }
-  },
-  required: ['playerName']
-}, async (args, env) => {
-  const { playerName, days = 30 } = args;
-
-  return await getOrComputeAnalytics(
-    env,
-    `leak_report:${playerName}:${days}`,
-    async () => {
-      // Get basic stats
-      const basicStats = await d1QueryViaProxy(env, `
-        SELECT
-          COUNT(*) as total_hands,
-          SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as overall_winrate,
-          AVG(hero_won) as avg_profit_per_hand,
-          SUM(hero_won) as total_profit
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
-        WHERE h.date >= datetime('now', '-${days} days')
-      `, [playerName]);
-
-      // Get positional VPIP/PFR
-      const positionStats = await d1QueryViaProxy(env, `
-        SELECT
-          p.position,
-          COUNT(*) as hands,
-          SUM(CASE WHEN EXISTS (
-            SELECT 1 FROM actions a
-            WHERE a.hand_id = h.hand_id
-              AND a.street = 'preflop'
-              AND a.player = p.name
-              AND a.action IN ('call','bet','raise')
-          ) THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as vpip_pct,
-          SUM(CASE WHEN EXISTS (
-            SELECT 1 FROM actions a
-            WHERE a.hand_id = h.hand_id
-              AND a.street = 'preflop'
-              AND a.player = p.name
-              AND a.action IN ('bet','raise')
-          ) THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as pfr_pct
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
-        WHERE h.date >= datetime('now', '-${days} days')
-          AND p.position IS NOT NULL
-        GROUP BY p.position
-      `, [playerName]);
-
-      // Get 3-bet stats
-      const threeBetStats = await d1QueryViaProxy(env, `
-        SELECT
-          COUNT(*) as total_hands_preflop,
-          SUM(CASE WHEN (
-            SELECT COUNT(*)
-            FROM actions a2
-            WHERE a2.hand_id = h.hand_id
-              AND a2.street = 'preflop'
-              AND a2.action IN ('bet','raise')
-          ) >= 2 THEN 1 ELSE 0 END) as times_3bet_or_more
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
-        WHERE h.date >= datetime('now', '-${days} days')
-          AND EXISTS (
-            SELECT 1 FROM actions a1
-            WHERE a1.hand_id = h.hand_id
-              AND a1.street = 'preflop'
-              AND a1.player = p.name
-          )
-      `, [playerName]);
-
-      // Get showdown win rate (when they went to showdown)
-      const showdownStats = await d1QueryViaProxy(env, `
-        SELECT
-          COUNT(*) as hands_showdown,
-          SUM(CASE WHEN hero_won > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as showdown_winrate
-        FROM hands h
-        JOIN players p ON p.hand_id = h.hand_id AND p.is_hero = 1 AND p.name = ?
-        WHERE h.date >= datetime('now', '-${days} days')
-          AND EXISTS (
-            SELECT 1 FROM actions a
-            WHERE a.hand_id = h.hand_id
-              AND a.street = 'showdown'
-          )
-      `, [playerName]);
-
-      const basic = basicStats.results?.[0] || {};
-      const positions = positionStats.results || [];
-      const threeBet = threeBetStats.results?.[0] || {};
-      const showdown = showdownStats.results?.[0] || {};
-
-      // Identify leaks
-      const leaks = [];
-
-      // VPIP too high/low by position
-      positions.forEach(pos => {
-        const vpip = parseFloat(pos.vpip_pct) || 0;
-        const pfr = parseFloat(pos.pfr_pct) || 0;
-
-        // Ideal VPIP/PFR ratios by position (simplified)
-        let maxVPIP = 30; // Default max
-        let minVPIP = 10; // Default min
-
-        switch (pos.position) {
-          case 'UTG': maxVPIP = 18; minVPIP = 8; break;
-          case 'MP1': maxVPIP = 20; minVPIP = 9; break;
-          case 'MP2': maxVPIP = 22; minVPIP = 10; break;
-          case 'MP3': maxVPIP = 24; minVPIP = 11; break;
-          case 'CO': maxVPIP = 26; minVPIP = 12; break;
-          case 'BTN': maxVPIP = 30; minVPIP = 15; break;
-          case 'SB': maxVPIP = 28; minVPIP = 12; break;
-          case 'BB': maxVPIP = 25; minVPIP = 10; break;
-        }
-
-        if (vpip > maxVPIP) {
-          leaks.push({
-            type: 'VPIP_TOO_HIGH',
-            position: pos.position,
-            current: vpip.toFixed(1),
-            recommended: maxVPIP,
-            severity: 'HIGH',
-            description: `Playing too many hands from ${pos.position} (VPIP ${vpip}% > ${maxVPIP}% max)`
-          });
-        } else if (vpip < minVPIP) {
-          leaks.push({
-            type: 'VPIP_TOO_LOW',
-            position: pos.position,
-            current: vpip.toFixed(1),
-            recommended: minVPIP,
-            severity: 'MEDIUM',
-            description: `Playing too few hands from ${pos.position} (VPIP ${vpip}% < ${minVPIP}% min)`
-          });
-        }
-
-        // Check aggression (PFR should be ~60-80% of VPIP for good players)
-        if (vpip > 0) {
-          const aggressionPct = (pfr / vpip) * 100;
-          if (aggressionPct < 40) {
-            leaks.push({
-              type: 'NOT_AGGRESSIVE_ENOUGH',
-              position: pos.position,
-              current: aggressionPct.toFixed(1),
-              recommended: '60-80',
-              severity: 'MEDIUM',
-              description: `Not aggressive enough from ${pos.position} (PFR/VPIP ratio ${aggressionPct}% < 40%)`
-            });
-          } else if (aggressionPct > 90) {
-            leaks.push({
-              type: 'TOO_AGGRESSIVE',
-              position: pos.position,
-              current: aggressionPct.toFixed(1),
-              recommended: '60-80',
-              severity: 'LOW',
-              description: `Possibly too aggressive from ${pos.position} (PFR/VPIP ratio ${aggressionPct}% > 90%)`
-            });
-          }
-        }
-      });
-
-      // 3-bet frequency
-      const totalHandsPreflop = parseFloat(threeBet.total_hands_preflop) || 0;
-      const times3bet = parseFloat(threeBet.times_3bet_or_more) || 0;
-      const threeBetPct = totalHandsPreflop > 0 ? (times3bet / totalHandsPreflop * 100) : 0;
-
-      if (threeBetPct < 3) {
-        leaks.push({
-          type: 'THREE_BET_TOO_LOW',
-          current: threeBetPct.toFixed(2),
-          recommended: '3-8',
-          severity: 'MEDIUM',
-          description: `3-bet frequency too low (${threeBetPct}% < 3%)`
-        });
-      } else if (threeBetPct > 10) {
-        leaks.push({
-          type: 'THREE_BET_TOO_HIGH',
-          current: threeBetPct.toFixed(2),
-          recommended: '3-8',
-          severity: 'LOW',
-          description: `3-bet frequency possibly too high (${threeBetPct}% > 10%)`
-        });
-      }
-
-      // Showdown win rate
-      const showdownWinrate = parseFloat(showdown.showdown_winrate) || 0;
-      const handsShowdown = parseFloat(showdown.hands_showdown) || 0;
-
-      if (handsShowdown >= 20) { // Only consider if reasonable sample size
-        if (showdownWinrate < 45) {
-          leaks.push({
-            type: 'SHOWDOWN_WINRATE_TOO_LOW',
-            current: showdownWinrate.toFixed(1),
-            recommended: '45-55',
-            severity: 'HIGH',
-            description: `Showdown win rate too low (${showdownWinrate}% < 45%)`
-          });
-        } else if (showdownWinrate > 55) {
-          leaks.push({
-            type: 'SHOWDOWN_WINRATE_TOO_HIGH',
-            current: showdownWinrate.toFixed(1),
-            recommended: '45-55',
-            severity: 'LOW',
-            description: `Showdown win rate suspiciously high (${showdownWinrate}% > 55%) - might be running hot`
-          });
-        }
-      }
-
-      // Sort leaks by severity (HIGH > MEDIUM > LOW)
-      const severityOrder = { HIGH: 3, MEDIUM: 2, LOW: 1 };
-      leaks.sort((a, b) => (severityOrder[b.severity] || 0) - (severityOrder[a.severity] || 0));
-
-      return {
-        player: playerName,
-        period_days: days,
-        generated_at: new Date().toISOString(),
-        overall_stats: {
-          total_hands: parseInt(basic.total_hands) || 0,
-          overall_winrate: parseFloat((basic.overall_winrate || 0).toFixed(2)),
-          avg_profit_per_hand: parseFloat((basic.avg_profit_per_hand || 0).toFixed(4)),
-          total_profit: parseFloat((basic.total_profit || 0).toFixed(2))
-        },
-        positional_stats: positions.map(pos => ({
-          position: pos.position,
-          hands: parseInt(pos.hands) || 0,
-          vpip: parseFloat((pos.vpip_pct || 0).toFixed(1)),
-          pfr: parseFloat((pos.pfr_pct || 0).toFixed(1))
-        })),
-        three_bet_stats: {
-          total_hands_preflop: parseInt(threeBet.total_hands_preflop) || 0,
-          times_3bet_or_more: parseInt(threeBet.times_3bet_or_more) || 0,
-          three_bet_percentage: parseFloat((threeBetPct).toFixed(2))
-        },
-        showdown_stats: {
-          hands_showdown: parseInt(handsShowdown) || 0,
-          showdown_winrate: parseFloat((showdownWinrate || 0).toFixed(1))
-        },
-        leaks: leaks,
-        summary: {
-          total_leaks: leaks.length,
-          high_priority_leaks: leaks.filter(l => l.severity === 'HIGH').length,
-          medium_priority_leaks: leaks.filter(l => l.severity === 'MEDIUM').length,
-          low_priority_leaks: leaks.filter(l => l.severity === 'LOW').length
-        }
-      };
-    }
-  );
-});
-
-export default {
+var mcp_worker_default = {
   async fetch(request, env) {
     const url = new URL(request.url);
-
-    // Return 404 for OAuth/OIDC discovery paths so that spec-compliant MCP
-    // clients (Claude Connectors, etc.) see "no auth required" and connect
-    // directly without attempting an OAuth flow (which would produce ofid_* errors).
     const oauthPaths = [
-      '/.well-known/oauth-protected-resource',
-      '/.well-known/oauth-authorization-server',
-      '/.well-known/openid-configuration',
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/openid-configuration"
     ];
     if (oauthPaths.includes(url.pathname)) {
-      return new Response('Not found', { status: 404 });
+      return new Response("Not found", { status: 404 });
     }
-
-    // Proxy SSE and messages paths to the tunnel (which routes to the local Python MCP server)
-    if (url.pathname === '/sse' || url.pathname.startsWith('/messages') || url.pathname.startsWith('/mcp/hands')) {
+    if (url.pathname === "/sse" || url.pathname.startsWith("/messages") || url.pathname.startsWith("/mcp/hands")) {
       const destinationUrl = new URL(request.url);
-      destinationUrl.hostname = 'db.leaksnipe.win';
+      destinationUrl.hostname = "db.leaksnipe.win";
       const newHeaders = new Headers(request.headers);
-      newHeaders.set('host', 'db.leaksnipe.win');
+      newHeaders.set("host", "db.leaksnipe.win");
       const newRequest = new Request(destinationUrl.toString(), {
         method: request.method,
         headers: newHeaders,
@@ -4046,3 +2626,7 @@ export default {
     return server.handleRequest(request, env);
   }
 };
+export {
+  mcp_worker_default as default
+};
+//# sourceMappingURL=mcp-worker.js.map

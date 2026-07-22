@@ -8,10 +8,13 @@ type SeatHudBadgeProps = {
   seat?: number;
   layoutMode?: boolean;
   onDragEnd?: (dx: number, dy: number) => void;
+  /** Click a badge (in layout mode) to pin its position-stats panel open. */
+  pinned?: boolean;
 };
 
-export function SeatHudBadge({ stats, name, seat, layoutMode }: SeatHudBadgeProps) {
+export function SeatHudBadge({ stats, name, seat, layoutMode, pinned }: SeatHudBadgeProps) {
   const [showTooltip, setShowTooltip] = useState(false);
+  const tooltipVisible = showTooltip || pinned;
   const playerType = stats?.effective_type || stats?.auto_type || "Unknown";
 
   const positions = useMemo(() => {
@@ -24,7 +27,7 @@ export function SeatHudBadge({ stats, name, seat, layoutMode }: SeatHudBadgeProp
 
   return (
     <div
-      className={`live-seat-badge ${layoutMode ? "layout-mode" : ""}`}
+      className={`live-seat-badge ${layoutMode ? "layout-mode" : ""} ${pinned ? "pinned" : ""}`}
       onMouseEnter={() => setShowTooltip(true)}
       onMouseLeave={() => setShowTooltip(false)}
     >
@@ -89,29 +92,35 @@ export function SeatHudBadge({ stats, name, seat, layoutMode }: SeatHudBadgeProp
         )}
       </div>
 
-      {showTooltip && positions.length > 0 ? (
-        <div className="hud-tooltip" role="tooltip">
-          <div className="hud-tooltip-title">Position stats</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Pos</th>
-                <th>H</th>
-                <th>VPIP</th>
-                <th>PFR</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map(([pos, d]) => (
-                <tr key={pos}>
-                  <td>{pos}</td>
-                  <td>{d.hands}</td>
-                  <td>{d.vpip}%</td>
-                  <td>{d.pfr}%</td>
+      {tooltipVisible && (positions.length > 0 || pinned) ? (
+        <div className={`hud-tooltip ${pinned ? "pinned" : ""}`} role="tooltip">
+          <div className="hud-tooltip-title">
+            Position stats{pinned ? " · click badge to unpin" : ""}
+          </div>
+          {positions.length > 0 ? (
+            <table>
+              <thead>
+                <tr>
+                  <th>Pos</th>
+                  <th>H</th>
+                  <th>VPIP</th>
+                  <th>PFR</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {positions.map(([pos, d]) => (
+                  <tr key={pos}>
+                    <td>{pos}</td>
+                    <td>{d.hands}</td>
+                    <td>{d.vpip}%</td>
+                    <td>{d.pfr}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="hud-tooltip-empty">No position data yet</div>
+          )}
         </div>
       ) : null}
     </div>

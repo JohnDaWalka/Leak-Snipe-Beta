@@ -47,14 +47,14 @@
   "advanced_mode": false,
   "live_hud_enabled": true,
   "live_hud_backend": "tauri",
-  "hud_opacity": 0.6,
+  "hud_opacity": 0.65,
   "hud_seat_layout": "auto",
   "hud_density": "compact",
   "hud_anchor": "top-left",
   "hud_offset_x": 0,
   "hud_offset_y": 0,
   "hud_edge_margin_pct": 0.05,
-  "hud_badge_scale": 1.8,
+  "hud_badge_scale": 0.9,
   "hud_locked": true,
   "hud_slot_positions": {},
   "hud_site_profiles": {
@@ -109,26 +109,5 @@
   "db_path": "poker_hands.db",
   "dh2_auto_sync": false,
   "dh2_sync_interval": 5,
-  "hud_seat_offsets": {
-    "6:4": {
-      "x": 0.30287526427061306,
-      "y": 0.245
-    },
-    "6:3": {
-      "x": 0.1048766737138831,
-      "y": 0.3566666666666667
-    },
-    "6:6": {
-      "x": 0.9056941508104298,
-      "y": 0.7798148148148148
-    },
-    "6:5": {
-      "x": 0.5451138113181804,
-      "y": 0.8454053827153272
-    },
-    "6:2": {
-      "x": 0.11095137420718815,
-      "y": 0.8307407407407408
-    }
-  }
+  "hud_seat_offsets": {}
 }

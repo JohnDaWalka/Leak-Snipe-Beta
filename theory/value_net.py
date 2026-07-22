@@ -380,9 +380,10 @@ def theory_context_block(
     pos_idx = 0.5
     if position:
         try:
-            from theory.charts import CHART_POSITIONS
+            from theory.charts import CHART_POSITIONS, normalize_chart_position
 
-            pos_idx = CHART_POSITIONS.index(position.upper()) / max(1, len(CHART_POSITIONS) - 1)
+            pos = normalize_chart_position(position)
+            pos_idx = CHART_POSITIONS.index(pos) / max(1, len(CHART_POSITIONS) - 1)
         except (ImportError, ValueError):
             pass
     pred = predict_value(

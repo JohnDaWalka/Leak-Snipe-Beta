@@ -332,39 +332,110 @@ fn find_primary_table() -> Option<TableBounds> {
     None
 }
 
+/// True when the table (or the HUD overlay itself, e.g. while the user is
+/// dragging badges in layout mode) currently owns the foreground. Anything
+/// else — alt-tabbing to Grok, a browser, another app — should not have the
+/// always-on-top overlay drawn over it.
+#[cfg(windows)]
+fn target_has_foreground(table_hwnd: isize, overlay_hwnd: Option<isize>) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+
+    let fg = unsafe { GetForegroundWindow() };
+    if fg == HWND(0 as _) {
+        return false;
+    }
+    let fg_isize = fg.0 as isize;
+    fg_isize == table_hwnd || overlay_hwnd.map(|h| h == fg_isize).unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn target_has_foreground(_table_hwnd: isize, _overlay_hwnd: Option<isize>) -> bool {
+    true
+}
+
+#[cfg(windows)]
+fn overlay_hwnd(app: &AppHandle) -> Option<isize> {
+    app.get_webview_window("live-hud")
+        .and_then(|w| w.hwnd().ok())
+        .map(|h| h.0 as isize)
+}
+
+#[cfg(not(windows))]
+fn overlay_hwnd(_app: &AppHandle) -> Option<isize> {
+    None
+}
+
+// Foreground/focus is checked every tick (cheap: one Win32 call) so the
+// overlay disappears the moment you alt-tab away; the full window-enumeration
+// table search only needs to happen every FULL_SCAN_EVERY_TICKS ticks.
+const FOCUS_TICK_MS: u64 = 350;
+const FULL_SCAN_EVERY_TICKS: u32 = 4; // ~1.4s, matches the old fixed interval
+
 fn detection_loop(app: AppHandle, stop_flag: Arc<AtomicBool>) {
     let mut last: Option<TableBounds> = None;
     let mut misses: u32 = 0;
+    let mut tick: u32 = 0;
+    let mut overlay_shown = false;
 
     while !stop_flag.load(Ordering::SeqCst) {
-        if let Some(bounds) = find_primary_table() {
-            misses = 0;
-            let changed = last
-                .as_ref()
-                .map(|p| {
-                    p.x != bounds.x
-                        || p.y != bounds.y
-                        || p.width != bounds.width
-                        || p.height != bounds.height
-                        || p.hwnd != bounds.hwnd
-                })
-                .unwrap_or(true);
+        if tick % FULL_SCAN_EVERY_TICKS == 0 {
+            if let Some(bounds) = find_primary_table() {
+                misses = 0;
+                let changed = last
+                    .as_ref()
+                    .map(|p| {
+                        p.x != bounds.x
+                            || p.y != bounds.y
+                            || p.width != bounds.width
+                            || p.height != bounds.height
+                            || p.hwnd != bounds.hwnd
+                    })
+                    .unwrap_or(true);
 
-            if changed {
-                position_overlay(&app, &bounds);
-                let _ = app.emit("hud-table-bounds", &bounds);
+                if changed {
+                    let _ = app.emit("hud-table-bounds", &bounds);
+                }
                 last = Some(bounds);
-            }
-        } else {
-            misses += 1;
-            if misses == 1 || misses % 10 == 0 {
-                let _ = app.emit(
-                    "hud-status",
-                    "No ACR table detected — showing manual overlay",
-                );
+            } else {
+                last = None;
+                misses += 1;
+                if misses == 1 || misses % 10 == 0 {
+                    let _ = app.emit(
+                        "hud-status",
+                        "No ACR table detected — showing manual overlay",
+                    );
+                }
             }
         }
-        thread::sleep(Duration::from_millis(1500));
+        tick = tick.wrapping_add(1);
+
+        match &last {
+            Some(bounds) => {
+                let ohwnd = overlay_hwnd(&app);
+                if target_has_foreground(bounds.hwnd, ohwnd) {
+                    if !overlay_shown {
+                        position_overlay(&app, bounds);
+                        overlay_shown = true;
+                    }
+                } else if overlay_shown {
+                    if let Some(win) = app.get_webview_window("live-hud") {
+                        let _ = win.hide();
+                    }
+                    overlay_shown = false;
+                }
+            }
+            None => {
+                if overlay_shown {
+                    if let Some(win) = app.get_webview_window("live-hud") {
+                        let _ = win.hide();
+                    }
+                    overlay_shown = false;
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(FOCUS_TICK_MS));
     }
 }
 

@@ -496,7 +496,7 @@ def handle_request(req):
                     },
                     {
                         "name": "run_network_command",
-                        "description": "Execute network diagnostics and tools (ipconfig, ping, tracert, nslookup, netstat, arp, route).",
+                        "description": "Execute network diagnostics and tools (ipconfig, ping, tracert, nslookup, netstat, arp, route, getmac).",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
@@ -506,9 +506,8 @@ def handle_request(req):
                                     "description": "Network tool to run"
                                 },
                                 "args": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "List of arguments to pass to the command (e.g. ['-ano'] or ['db.leaksnipe.win'])"
+                                    "type": "string",
+                                    "description": "Command-line arguments as a single space-separated string (e.g. 'google.com' or '-n 4 google.com')"
                                 }
                             },
                             "required": ["command"]
@@ -526,9 +525,8 @@ def handle_request(req):
                                     "description": "Command to execute"
                                 },
                                 "args": {
-                                    "type": "array",
-                                    "items": {"type": "string"},
-                                    "description": "Arguments to pass (e.g. ['tunnel', 'list'] or ['whoami'])"
+                                    "type": "string",
+                                    "description": "Command-line arguments as a single space-separated string (e.g. 'tunnel list' or 'whoami')"
                                 },
                                 "sub_project": {
                                     "type": "string",
@@ -536,7 +534,7 @@ def handle_request(req):
                                     "description": "Working directory context to run wrangler command (default: 'root')"
                                 }
                             },
-                            "required": ["command", "args"]
+                            "required": ["command"]
                         }
                     }
                 ]
@@ -670,10 +668,12 @@ def handle_request(req):
 
             elif tool_name == "run_network_command":
                 cmd = args.get("command")
-                cmd_args = args.get("args", [])
+                raw_args = args.get("args")
                 if cmd not in ["ipconfig", "ping", "tracert", "nslookup", "netstat", "arp", "route", "getmac"]:
                     return json_rpc_error(req_id, -32602, f"Unauthorized network command: {cmd}")
                 
+                import shlex
+                cmd_args = shlex.split(raw_args) if raw_args else []
                 clean_args = []
                 import re
                 for arg in cmd_args:
@@ -688,7 +688,7 @@ def handle_request(req):
 
             elif tool_name == "run_cloudflare_command":
                 cmd = args.get("command")
-                cmd_args = args.get("args", [])
+                raw_args = args.get("args")
                 sub_proj = args.get("sub_project", "root")
                 
                 if cmd not in ["wrangler", "cloudflared"]:
@@ -705,6 +705,8 @@ def handle_request(req):
                 if not os.path.isdir(proj_dir):
                     return json_rpc_error(req_id, -32602, f"Directory does not exist: {proj_dir}")
                 
+                import shlex
+                cmd_args = shlex.split(raw_args) if raw_args else []
                 clean_args = []
                 import re
                 for arg in cmd_args:

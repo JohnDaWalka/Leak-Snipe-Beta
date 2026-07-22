@@ -2,17 +2,21 @@ name = "leaksnipe"
 main = "src/mcp-worker.js"
 compatibility_date = "2026-07-14"
 compatibility_flags = ["nodejs_compat"]
-workers_dev = false
-preview_urls = false
+workers_dev = true
+preview_urls = true
 
-# Route(s) for this worker are already configured on the leaksnipe.win zone
-# (dashboard-managed or from an earlier deploy). Declaring them here too makes
-# `wrangler deploy`'s route-sync step fail with 409 Conflict on every deploy —
-# harmless (nothing is created/changed when it fails), but noisy. Manage
-# routes/custom domains via the dashboard instead of wrangler.toml.
+# Catch-all so the landing HTML (and MCP) always hit this worker, not an older binding.
+# routes = [
+#   { pattern = "leaksnipe.win/*", zone_name = "leaksnipe.win" },
+#   { pattern = "leaksnipe.win", zone_name = "leaksnipe.win" },
+#   { pattern = "www.leaksnipe.win/*", zone_name = "leaksnipe.win" },
+#   { pattern = "www.leaksnipe.win", zone_name = "leaksnipe.win" },
+#   { pattern = "*.leaksnipe.win/*", zone_name = "leaksnipe.win" },
+# ]
 
+# Default Worker limit is too low for D1 coaching queries
 [limits]
-cpu_ms = 1
+cpu_ms = 50
 
 [placement]
 mode = "smart"
@@ -34,11 +38,70 @@ bucket_name = "poker-hand-histories"
 binding = "R2_POKER_HANDS"
 bucket_name = "poker-hands"
 
+# Hot/Warm/Cold storage tiers for lifecycle management
+[[r2_buckets]]
+binding = "HAND_HISTORY_HOT"
+bucket_name = "leaksnipe-hand-histories-hot"
+
+[[r2_buckets]]
+binding = "HAND_HISTORY_WARM"
+bucket_name = "leaksnipe-hand-histories-warm"
+
+[[r2_buckets]]
+binding = "HAND_HISTORY_COLD"
+bucket_name = "leaksnipe-hand-histories-cold"
+
+# NEW: Specialized R2 buckets
+[[r2_buckets]]
+binding = "R2_AI_OUTPUTS"
+bucket_name = "leaksnipe-ai-outputs"
+
+[[r2_buckets]]
+binding = "R2_MEDIA"
+bucket_name = "leaksnipe-media"
+
+[[r2_buckets]]
+binding = "R2_BACKUPS"
+bucket_name = "leaksnipe-backups"
+
 [[kv_namespaces]]
 binding = "HAND_HISTORY_KV"
 id = "c13121512b8e4519ae9b3a3a52daeed1"
 
+[[kv_namespaces]]
+binding = "HAND_HISTORY_KV_ANALYTICS"
+id = "4ea8afb5b3b644f487a26ed1abc08804"
+
+# Enhanced architecture namespaces
+[[kv_namespaces]]
+binding = "HAND_META"          # ← leaksnipe-kv-hand-meta
+id = "c12fd079fea242468a2773eb4e198508"
+
+[[kv_namespaces]]
+binding = "PLAYERS"            # ← leaksnipe-kv-players
+id = "826bc87bdab34f788fc2a628cfcd7d2c"
+
+[[kv_namespaces]]
+binding = "SESSIONS"           # ← leaksnipe-kv-sessions
+id = "9bf773b24d3c40c3b11d34b484007a84"
+
+[[kv_namespaces]]
+binding = "AI_INSIGHTS"        # ← leaksnipe-kv-ai
+id = "044b2e1a90e043d7b8c7f84607cc1c3a"
+
+[[kv_namespaces]]
+binding = "HOT_CACHE"          # ← leaksnipe-kv-hot (optional)
+id = "6f3de61aa62540008efc29367e11bc43"
+
+# Full coaching schema (hands + ai_analysis + coach_memory + catalog)
 [[d1_databases]]
 binding = "DB"
 database_name = "leaksnipe-hands"
 database_id = "9a9ba1db-5e5e-4fd7-9ff4-bcd6e25ddc2e"
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS_DB"
+dataset = "d1_Databases"
+
+[vars]
+BACKFILL_ADMIN_KEY = "leaksnipe-admin-key-999"
