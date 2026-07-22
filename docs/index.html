@@ -1,334 +1,616 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>LeakSnipe — Multi-site Poker Hand Tracker</title>
-<meta name="description" content="LeakSnipe — a multi-site poker hand tracker with AI-assisted leak detection, live HUD, and training tools.">
-<style>
-  :root {
-    --primary: #1e3a8a;
-    --secondary: #3b82f6;
-    --accent: #10b981;
-    --dark: #0f172a;
-    --light: #f8fafc;
-    --gray: #64748b;
-    --radius: 12px;
-    --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    line-height: 1.6;
-    color: var(--dark);
-    background-color: var(--light);
-  }
-  .container { width: 90%; max-width: 1200px; margin: 0 auto; padding: 2rem 0; }
-  .hero {
-    background: linear-gradient(135deg, var(--primary), var(--secondary));
-    color: var(--light);
-    text-align: center;
-    padding: 6rem 2rem;
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    margin-bottom: 3rem;
-  }
-  .hero h1 {
-    font-size: 2.8rem;
-    margin-bottom: 1rem;
-    letter-spacing: -0.5px;
-  }
-  .hero p {
-    font-size: 1.25rem;
-    margin-bottom: 2rem;
-    opacity: 0.9;
-  }
-  .hero .btn {
-    display: inline-block;
-    background: var(--accent);
-    color: var(--dark);
-    padding: 0.9rem 2rem;
-    border-radius: var(--radius);
-    text-decoration: none;
-    font-weight: 600;
-    transition: transform 0.2s, box-shadow 0.2s;
-  }
-  .hero .btn:hover {
-    transform: translateY(-3px);
-    box-shadow: var(--shadow);
-  }
-  .features {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 2rem;
-  }
-  .feature-card {
-    background: var(--light);
-    border-radius: var(--radius);
-    padding: 2rem;
-    box-shadow: var(--shadow);
-    transition: transform 0.3s, box-shadow 0.3s;
-    border: 1px solid #e2e8f0;
-  }
-  .feature-card:hover {
-    transform: translateY(-5px);
-    box-shadow: 0 8px 15px -3px rgb(0 0 0 / 0.1), 0 5px 10px -3px rgb(0 0 0 / 0.1);
-  }
-  .feature-icon {
-    width: 60px;
-    height: 60px;
-    background: var(--secondary);
-    color: var(--light);
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.8rem;
-    margin-bottom: 1.5rem;
-  }
-  .feature-card h3 {
-    color: var(--primary);
-    margin-bottom: 1rem;
-    font-size: 1.4rem;
-  }
-  .feature-card p {
-    color: var(--gray);
-    font-size: 1rem;
-  }
-  .feature-example {
-    margin-top: 1.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px dashed #cbd5e1;
-    font-size: 0.9rem;
-    color: var(--gray);
-  }
-  .get-started {
-    text-align: center;
-    padding: 4rem 2rem;
-    background: #f8fafc;
-    border-radius: var(--radius);
-    margin: 3rem 0;
-    border: 1px solid #e2e8f0;
-  }
-  .get-started h2 {
-    color: var(--primary);
-    margin-bottom: 1.5rem;
-    font-size: 2rem;
-  }
-  .get-started p {
-    color: var(--gray);
-    margin-bottom: 2rem;
-    font-size: 1.1rem;
-    max-width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-  }
-  .email-form {
-    display: flex;
-    gap: 0.5rem;
-    max-width: 500px;
-    margin: 0 auto;
-  }
-  .email-form input {
-    flex: 1;
-    padding: 0.9rem 1.2rem;
-    border: 1px solid #e2e8f0;
-    border-radius: var(--radius);
-    font-size: 1rem;
-  }
-  .email-form button {
-    background: var(--accent);
-    color: var(--dark);
-    border: none;
-    padding: 0.9rem 2rem;
-    border-radius: var(--radius);
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
-  }
-  .email-form button:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow);
-  }
-  .form-status {
-    margin-top: 1rem;
-    font-size: 0.9rem;
-    min-height: 1.5em;
-  }
-  .faq {
-    background: var(--light);
-    border-radius: var(--radius);
-    padding: 2.5rem;
-    box-shadow: var(--shadow);
-  }
-  .faq h2 {
-    text-align: center;
-    color: var(--primary);
-    margin-bottom: 2rem;
-    font-size: 2rem;
-  }
-  .faq-item {
-    margin-bottom: 1.5rem;
-    border-bottom: 1px solid #e2e8f0;
-    padding-bottom: 1rem;
-  }
-  .faq-item:last-child {
-    margin-bottom: 0;
-    border-bottom: none;
-    padding-bottom: 0;
-  }
-  .faq-question {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    cursor: pointer;
-    padding: 1rem 0;
-    font-weight: 600;
-    color: var(--dark);
-  }
-  .faq-question::after {
-    content: '+';
-    font-size: 1.5rem;
-    color: var(--secondary);
-    transition: transform 0.3s;
-  }
-  .faq-item.active .faq-question::after {
-    transform: rotate(45deg);
-  }
-  .faq-answer {
-    max-height: 0;
-    overflow: hidden;
-    transition: max-height 0.3s ease-out;
-    color: var(--gray);
-    line-height: 1.5;
-    padding: 0 1rem;
-  }
-  .faq-item.active .faq-answer {
-    max-height: 200px;
-    transition: max-height 0.3s ease-in;
-    padding: 1rem;
-  }
-  @media (max-width: 768px) {
-    .hero h1 { font-size: 2.2rem; }
-    .hero p { font-size: 1.1rem; }
-    .features { grid-template-columns: 1fr; }
-    .get-started { padding: 3rem 1.5rem; }
-    .email-form { flex-direction: column; }
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeakSnipe Beta — Real-Time Poker HUD & AI Leak Analytics</title>
+  <meta name="description" content="LeakSnipe Beta — High-performance poker hand tracking, real-time HUD, sidecar engine, and Cloudflare MCP AI analytics platform.">
+  
+  <!-- Google Fonts & FontAwesome / Mermaid -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #090d16;
+      --bg-card: rgba(15, 23, 42, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border-color: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(59, 130, 246, 0.3);
+      --primary: #3b82f6;
+      --primary-glow: #60a5fa;
+      --accent: #10b981;
+      --accent-purple: #8b5cf6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --font-heading: 'Outfit', sans-serif;
+      --font-body: 'Inter', sans-serif;
+      --font-code: 'Fira Code', monospace;
+      --radius-lg: 16px;
+      --radius-md: 10px;
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font-body);
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      line-height: 1.6;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 15%, rgba(59, 130, 246, 0.12) 0%, transparent 40%),
+        radial-gradient(circle at 85% 65%, rgba(139, 92, 246, 0.12) 0%, transparent 40%);
+      background-attachment: fixed;
+    }
+
+    /* Top Navigation Bar */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      background: rgba(9, 13, 22, 0.85);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .nav-container {
+      max-width: 1280px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: var(--text-main);
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--primary), var(--accent-purple));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-heading);
+      font-weight: 800;
+      font-size: 1.2rem;
+      color: #fff;
+      box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
+    }
+
+    .brand-title {
+      font-family: var(--font-heading);
+      font-weight: 700;
+      font-size: 1.35rem;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-tag {
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      font-size: 0.7rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      margin-left: 4px;
+    }
+
+    nav { display: flex; gap: 1.5rem; align-items: center; }
+
+    nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-weight: 500;
+      font-size: 0.95rem;
+      transition: var(--transition);
+    }
+
+    nav a:hover { color: var(--primary-glow); }
+
+    .nav-btn {
+      background: linear-gradient(135deg, var(--primary), #2563eb);
+      color: #fff !important;
+      padding: 0.5rem 1.2rem;
+      border-radius: 8px;
+      font-weight: 600 !important;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .nav-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+    }
+
+    /* Container */
+    .main-wrapper {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 3rem 2rem;
+    }
+
+    /* Hero Section */
+    .hero {
+      text-align: center;
+      padding: 4rem 1rem 5rem;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: rgba(59, 130, 246, 0.1);
+      border: 1px solid rgba(59, 130, 246, 0.25);
+      padding: 0.4rem 1rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      color: var(--primary-glow);
+      margin-bottom: 1.5rem;
+      font-weight: 500;
+    }
+
+    .hero h1 {
+      font-family: var(--font-heading);
+      font-size: 3.5rem;
+      font-weight: 800;
+      line-height: 1.15;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(135deg, #ffffff 30%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 0 auto 2.5rem;
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      font-weight: 400;
+    }
+
+    .hero-actions {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), var(--accent-purple));
+      color: #fff;
+      padding: 0.9rem 2.2rem;
+      border-radius: var(--radius-md);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.05rem;
+      box-shadow: 0 8px 25px rgba(59, 130, 246, 0.35);
+      transition: var(--transition);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 12px 30px rgba(59, 130, 246, 0.5);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      border: 1px solid var(--border-color);
+      padding: 0.9rem 2.2rem;
+      border-radius: var(--radius-md);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1.05rem;
+      transition: var(--transition);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    /* Section Cards */
+    .section-title {
+      font-family: var(--font-heading);
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 0.75rem;
+      color: var(--text-main);
+    }
+
+    .section-subtitle {
+      color: var(--text-muted);
+      margin-bottom: 2.5rem;
+      font-size: 1.05rem;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.75rem;
+      margin-bottom: 4rem;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 2rem;
+      backdrop-filter: blur(12px);
+      transition: var(--transition);
+    }
+
+    .card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-glow);
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    }
+
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--primary-glow);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      margin-bottom: 1.25rem;
+    }
+
+    .card h3 {
+      font-family: var(--font-heading);
+      font-size: 1.3rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    .card p {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+    }
+
+    /* Architecture Diagram Section */
+    .architecture-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      padding: 2.5rem;
+      margin-bottom: 4rem;
+      backdrop-filter: blur(12px);
+    }
+
+    .tab-bar {
+      display: flex;
+      gap: 0.75rem;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 1rem;
+      margin-bottom: 2rem;
+      overflow-x: auto;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.6rem 1.25rem;
+      border-radius: var(--radius-md);
+      font-family: var(--font-body);
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .tab-btn.active, .tab-btn:hover {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--primary-glow);
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .diagram-container {
+      background: rgba(9, 13, 22, 0.9);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 2rem;
+      overflow-x: auto;
+      text-align: center;
+    }
+
+    /* Quick Links Box */
+    .links-box {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .link-item {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      text-decoration: none;
+      color: var(--text-main);
+      transition: var(--transition);
+    }
+
+    .link-item:hover {
+      background: rgba(59, 130, 246, 0.1);
+      border-color: var(--border-glow);
+    }
+
+    .link-title { font-weight: 600; font-size: 1rem; }
+    .link-desc { font-size: 0.85rem; color: var(--text-muted); }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border-color);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+  </style>
 </head>
 <body>
-<section class="hero">
-  <div class="container">
-    <h1>Elevate Your Poker Game</h1>
-    <p>Professional tools, real-time analytics, and a community of serious players.</p>
-    <a href="#get-started-section" class="btn">Get Started Free</a>
-  </div>
-</section>
 
-<section class="features">
-  <div class="container">
-    <div class="feature-card">
-      <div class="feature-icon">📊</div>
-      <h3>Advanced Hand History Review</h3>
-      <p>Deep dive into every session with sortable filters, equity graphs, and leak detection.</p>
-      <div class="feature-example">
-        <strong>Example:</strong> Review a $5/$10 cash game session where you lost 12bb with K♠Q♠ on A♥K♦7♣ board. Our replayer shows you missed a 3-bet bluff opportunity on the turn.
+  <!-- Top Navigation Bar -->
+  <header>
+    <div class="nav-container">
+      <a href="https://leaksnipe.win" class="brand">
+        <div class="brand-logo">L</div>
+        <span class="brand-title">LeakSnipe</span>
+        <span class="brand-tag">Beta</span>
+      </a>
+      <nav>
+        <a href="https://leaksnipe.win">Home</a>
+        <a href="file:///C:/Users/Giuli/Projects/LeakSnipe/README.md">README Docs</a>
+        <a href="#architecture">Architecture</a>
+        <a href="https://worker.leaksnipe.win/mcp" target="_blank">MCP API</a>
+        <a href="https://github.com/JohnDaWalka/Leak-Snipe-Beta" class="nav-btn" target="_blank">GitHub Repository</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Content Wrapper -->
+  <div class="main-wrapper">
+
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-badge">
+        <span>⚡ Cloudflare MCP Worker & Real-time HUD Enabled</span>
       </div>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🤖</div>
-      <h3>AI-Powered Opponent Modeling</h3>
-      <p>Automatically profile opponents' tendencies and get real-time exploitative suggestions.</p>
-      <div class="feature-example">
-        <strong>Example:</strong> Opponent VPIP 48%, PFR 12% → classified as a loose-passive fish. Suggested adjustment: increase value bet sizing by 15% on wet boards.
+      <h1>Multi-Site Poker Hand Tracker<br>& Real-Time AI Leak Analytics</h1>
+      <p>LeakSnipe Beta delivers instant seat HUD overlays, Monte Carlo equity calculations, automated hand history sync to Cloudflare R2/KV, and grounded LLM coaching powered by Grok and Ollama.</p>
+      
+      <div class="hero-actions">
+        <a href="https://github.com/JohnDaWalka/Leak-Snipe-Beta" class="btn-primary" target="_blank">View GitHub Repository</a>
+        <a href="file:///C:/Users/Giuli/Projects/LeakSnipe/README.md" class="btn-secondary">Explore Documentation (README.md)</a>
       </div>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🏆</div>
-      <h3>Tournament Performance Tracker</h3>
-      <p>Track ROI, ITM%, and final table appearances across all series with custom date ranges.</p>
-      <div class="feature-example">
-        <strong>Example:</strong> In the last 30 days you played 45 MTTs with a 18% ROI, $3,200 profit, and 3 final tables (including 1 win in a $109 KO).
+    </section>
+
+    <!-- Core Features Grid -->
+    <section>
+      <h2 class="section-title">Core Architecture Features</h2>
+      <p class="section-subtitle">A decoupled hybrid desktop sidecar and Cloudflare edge pipeline built for ultra-low latency.</p>
+      
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-icon">♠</div>
+          <h3>Real-Time Live HUD Badge</h3>
+          <p>Super-fast desktop seat overlay built with Tauri and Python window hooks. Displays live VPIP, PFR, 3Bet%, and postflop statistics tailored for CoinPoker, ACR, Bovada, and GGPoker.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">⚡</div>
+          <h3>Cloudflare MCP Server</h3>
+          <p>Deployed Cloudflare Worker (`worker.leaksnipe.win/mcp`) featuring remote hand indexing, R2 bucket storage, KV `HAND_META` fast queries, and D1 database analytics.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">🤖</div>
+          <h3>Grounded AI Coaching</h3>
+          <p>Automated leak detection powered by LLM models with direct JSON-RPC tools for hand retrieval, range charts, and deterministic equity calculations.</p>
+        </div>
       </div>
-    </div>
-  </div>
-</section>
+    </section>
 
-<section id="get-started-section" class="get-started">
-  <div class="container">
-    <h2>Join the Waitlist</h2>
-    <p>Be among the first to access LeakSnipe's advanced features. Early adopters get exclusive access to new tools and personalized onboarding.</p>
-    <form class="email-form" id="waitlistForm">
-      <input type="email" id="emailInput" placeholder="Enter your email address" required>
-      <button type="submit">Join Waitlist</button>
-    </form>
-    <div class="form-status" id="formStatus"></div>
-  </div>
-</section>
+    <!-- Interactive Nested Architecture Diagrams Section -->
+    <section id="architecture" class="architecture-section">
+      <h2 class="section-title">System Architecture & Nested Diagrams</h2>
+      <p class="section-subtitle">Switch between interactive Mermaid views detailing every architectural layer of LeakSnipe.</p>
 
-<section class="faq">
-  <div class="container">
-    <h2>Frequently Asked Questions</h2>
-    <div class="faq-item">
-      <div class="faq-question">What platforms are supported?</div>
-      <div class="faq-answer">Our web app works on any modern browser. We also offer native desktop clients for Windows and macOS, plus mobile-friendly web access for iOS and Android devices.</div>
-    </div>
-    <div class="faq-item">
-      <div class="faq-question">Is my hand history data private and secure?</div>
-      <div class="faq-answer">Absolutely. All data is encrypted in transit (TLS 1.3) and at rest (AES-256). We never share your data with third parties, and you can export or delete your history anytime.</div>
-    </div>
-    <div class="faq-item">
-      <div class="faq-question">Do I need to import hands manually?</div>
-      <div class="faq-answer">No. Our auto-import feature works with major poker sites (PokerStars, partypool, GGPoker, etc.) via secure connection or manual file drop. Hands appear in your dashboard within seconds of play.</div>
-    </div>
-    <div class="faq-item">
-      <div class="faq-question">Can I try the premium features before subscribing?</div>
-      <div class="faq-answer">Yes! Sign up for a free 14-day trial of our Pro plan, which includes AI modeling, advanced filters, and priority support. No credit card required to start.</div>
-    </div>
-  </div>
-</section>
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('overview')">1. System Overview (L1)</button>
+        <button class="tab-btn" onclick="switchTab('dataflow')">2. Hand Sync Dataflow (L2)</button>
+        <button class="tab-btn" onclick="switchTab('mcp')">3. AI & MCP Protocol (L3)</button>
+      </div>
 
-<script>
-  document.querySelectorAll('.faq-question').forEach(button => {
-    button.addEventListener('click', () => {
-      const faqItem = button.parentElement;
-      faqItem.classList.toggle('active');
+      <!-- Tab 1: System Overview -->
+      <div id="tab-overview" class="tab-content active">
+        <div class="diagram-container">
+          <pre class="mermaid">
+graph TD
+    subgraph Client ["Desktop Client Layer"]
+        UI["Tauri React Frontend (Port 1420)"]
+        HUD["Live HUD Overlay Badge"]
+    end
+
+    subgraph Sidecar ["Local Sidecar Engine"]
+        API["FastAPI Sidecar (Port 8765)"]
+        SQLite[("poker_hands.db (SQLite WAL)")]
+        SyncWatcher["sync_hands.py Watcher"]
+    end
+
+    subgraph Cloud ["Cloudflare Edge Infrastructure"]
+        Worker["leaksnipe Worker (worker.leaksnipe.win/mcp)"]
+        KV[("HAND_META KV Namespace")]
+        R2[("leaksnipe-hand-histories R2 Bucket")]
+        D1[("leaksnipe-hands D1 Database")]
+        Pipelines["Cloudflare Pipelines (my_pipeline)"]
+    end
+
+    UI <--> API
+    HUD <--> API
+    API <--> SQLite
+    SyncWatcher --> SQLite
+    SyncWatcher -- "Batch Upload" --> Worker
+    Worker <--> KV
+    Worker <--> R2
+    Worker <--> D1
+    Worker --> Pipelines
+          </pre>
+        </div>
+      </div>
+
+      <!-- Tab 2: Data Flow -->
+      <div id="tab-dataflow" class="tab-content">
+        <div class="diagram-container">
+          <pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant PokerSite as Poker Client (ACR/CoinPoker)
+    participant Importer as Importer / Directory Watcher
+    participant DB as SQLite (poker_hands.db)
+    participant Sync as sync_hands.py
+    participant Worker as Cloudflare Worker (/mcp)
+    participant R2 as Cloudflare R2
+    participant KV as Cloudflare KV (HAND_META)
+
+    PokerSite->>Importer: Writes Hand History File (.txt / .json)
+    Importer->>DB: Parses and Stores Hand & Actions
+    Sync->>DB: Queries Unsynced Hands (Pending Sync)
+    Sync->>Worker: POST /mcp (store_large_hand_history)
+    Worker->>R2: Saves Full Hand History JSON Object
+    Worker->>KV: Stores Metadata Index (meta:handId)
+    Sync->>DB: Updates _cloudflare_sync Table Status
+          </pre>
+        </div>
+      </div>
+
+      <!-- Tab 3: MCP Protocol -->
+      <div id="tab-mcp" class="tab-content">
+        <div class="diagram-container">
+          <pre class="mermaid">
+flowchart LR
+    subgraph ClientApp ["AI Client / Desktop UI"]
+        Prompt["User Request / Coach Query"]
+    end
+
+    subgraph MCPWorker ["Cloudflare MCP Endpoint"]
+        Router["JSON-RPC Tool Router"]
+        Tools["Tools: list_hand_histories | get_hand_history | d1_database_summary"]
+    end
+
+    subgraph Storage ["Cloudflare Data Tier"]
+        D1DB[("D1 SQL Database")]
+        KVNS[("KV Meta Index")]
+        R2Storage[("R2 Object Bucket")]
+    end
+
+    subgraph AI ["AI Engine"]
+        LLM["Grok / Ollama Provider"]
+    end
+
+    Prompt --> Router
+    Router --> Tools
+    Tools --> D1DB
+    Tools --> KVNS
+    Tools --> R2Storage
+    Storage --> Router
+    Router --> LLM
+    LLM --> Prompt
+          </pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Quick Links & Reference Box -->
+    <section>
+      <h2 class="section-title">Navigation & Quick References</h2>
+      <p class="section-subtitle">Direct links to repository files and live Cloudflare services.</p>
+
+      <div class="links-box">
+        <a href="https://leaksnipe.win" class="link-item">
+          <div>
+            <div class="link-title">🏠 Official Home Page</div>
+            <div class="link-desc">https://leaksnipe.win</div>
+          </div>
+        </a>
+
+        <a href="file:///C:/Users/Giuli/Projects/LeakSnipe/README.md" class="link-item">
+          <div>
+            <div class="link-title">📖 README Documentation</div>
+            <div class="link-desc">Local markdown setup and developer workflow</div>
+          </div>
+        </a>
+
+        <a href="https://github.com/JohnDaWalka/Leak-Snipe-Beta" class="link-item" target="_blank">
+          <div>
+            <div class="link-title">📦 GitHub Repository</div>
+            <div class="link-desc">JohnDaWalka/Leak-Snipe-Beta (Private)</div>
+          </div>
+        </a>
+
+        <a href="https://worker.leaksnipe.win/mcp" class="link-item" target="_blank">
+          <div>
+            <div class="link-title">🌐 Worker MCP Endpoint</div>
+            <div class="link-desc">https://worker.leaksnipe.win/mcp</div>
+          </div>
+        </a>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <p>LeakSnipe Beta &copy; 2026. Maintained by <a href="https://github.com/JohnDaWalka" style="color: var(--primary-glow); text-decoration: none;">JohnDaWalka</a>.</p>
+  </footer>
+
+  <script>
+    // Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#090d16',
+        primaryColor: '#3b82f6',
+        primaryTextColor: '#fff',
+        lineColor: '#60a5fa'
+      }
     });
-  });
 
-  // Handle form submission
-  document.getElementById('waitlistForm').addEventListener('submit', function(e) {
-    e.preventDefault();
-    const emailInput = document.getElementById('emailInput');
-    const formStatus = document.getElementById('formStatus');
-    const email = emailInput.value.trim();
+    // Tab Switching Logic
+    function switchTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
-    if (email === '') {
-      formStatus.textContent = 'Please enter your email address';
-      formStatus.style.color = '#ef4444';
-      return;
+      event.target.classList.add('active');
+      document.getElementById('tab-' + tabId).classList.add('active');
     }
-
-    // Simple email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      formStatus.textContent = 'Please enter a valid email address';
-      formStatus.style.color = '#ef4444';
-      return;
-    }
-
-    // Simulate form submission (in a real app, you'd send this to a backend)
-    formStatus.textContent = 'Thanks for joining! Check your email for updates.';
-    formStatus.style.color = '#10b981';
-    emailInput.value = '';
-
-    // In a real implementation, you would send the email to a service like:
-    // fetch('https://formspree.io/f/your-form-id', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ email: email })
-    // })
-  });
-</script>
+  </script>
 </body>
 </html>

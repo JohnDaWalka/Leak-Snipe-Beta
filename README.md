@@ -1,6 +1,8 @@
-# LeakSnipe
+# LeakSnipe Beta
 
 **A local-first poker study workstation for turning hand histories into reliable statistics, replayable decisions, opponent reads, range work, and AI-assisted review.**
+
+> 🌐 **Live Home Page:** [https://leaksnipe.win](https://leaksnipe.win) | 📊 **Interactive Architecture & Web Docs:** [docs/index.html](file:///C:/Users/Giuli/Projects/LeakSnipe/docs/index.html) | 📦 **Repository:** [JohnDaWalka/Leak-Snipe-Beta](https://github.com/JohnDaWalka/Leak-Snipe-Beta)
 
 LeakSnipe imports poker hand histories into a local SQLite database, presents them in a modern Tauri desktop application, and connects the full review loop:
 
@@ -104,15 +106,93 @@ See [docs/THEORY.md](docs/THEORY.md) for the important distinction between exact
 
 ## Architecture
 
+### Level 1: System Overview
+
+```mermaid
+graph TD
+    subgraph Client ["Desktop Client Layer"]
+        UI["Tauri React Frontend (Port 1420)"]
+        HUD["Live HUD Overlay Badge"]
+    end
+
+    subgraph Sidecar ["Local Sidecar Engine"]
+        API["FastAPI Sidecar (Port 8765)"]
+        SQLite[("poker_hands.db (SQLite WAL)")]
+        SyncWatcher["sync_hands.py Watcher"]
+    end
+
+    subgraph Cloud ["Cloudflare Edge Infrastructure"]
+        Worker["leaksnipe Worker (worker.leaksnipe.win/mcp)"]
+        KV[("HAND_META KV Namespace")]
+        R2[("leaksnipe-hand-histories R2 Bucket")]
+        D1[("leaksnipe-hands D1 Database")]
+        Pipelines["Cloudflare Pipelines (my_pipeline)"]
+    end
+
+    UI <--> API
+    HUD <--> API
+    API <--> SQLite
+    SyncWatcher --> SQLite
+    SyncWatcher -- "Batch Upload" --> Worker
+    Worker <--> KV
+    Worker <--> R2
+    Worker <--> D1
+    Worker --> Pipelines
+```
+
+### Level 2: Real-time Hand History Sync Dataflow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PokerSite as Poker Client (ACR/CoinPoker)
+    participant Importer as Importer / Directory Watcher
+    participant DB as SQLite (poker_hands.db)
+    participant Sync as sync_hands.py
+    participant Worker as Cloudflare Worker (/mcp)
+    participant R2 as Cloudflare R2
+    participant KV as Cloudflare KV (HAND_META)
+
+    PokerSite->>Importer: Writes Hand History File (.txt / .json)
+    Importer->>DB: Parses and Stores Hand & Actions
+    Sync->>DB: Queries Unsynced Hands (Pending Sync)
+    Sync->>Worker: POST /mcp (store_large_hand_history)
+    Worker->>R2: Saves Full Hand History JSON Object
+    Worker->>KV: Stores Metadata Index (meta:handId)
+    Sync->>DB: Updates _cloudflare_sync Table Status
+```
+
+### Level 3: Cloudflare MCP & AI Reasoning Protocol
+
 ```mermaid
 flowchart LR
-    HH["Poker hand-history files"] --> IMP["Importer and parsers"]
-    IMP --> DB["SQLite: poker_hands.db"]
-    DB --> API["FastAPI sidecar :8765"]
-    ENG["Analysis, equity, theory, AI routing"] <--> API
-    API <--> UI["React + Tauri v2 desktop app"]
-    DB <--> HUD["Python pywin32 live HUD"]
-    HUD --> TABLE["Supported Windows poker table"]
+    subgraph ClientApp ["AI Client / Desktop UI"]
+        Prompt["User Request / Coach Query"]
+    end
+
+    subgraph MCPWorker ["Cloudflare MCP Endpoint"]
+        Router["JSON-RPC Tool Router"]
+        Tools["Tools: list_hand_histories | get_hand_history | d1_database_summary"]
+    end
+
+    subgraph Storage ["Cloudflare Data Tier"]
+        D1DB[("D1 SQL Database")]
+        KVNS[("KV Meta Index")]
+        R2Storage[("R2 Object Bucket")]
+    end
+
+    subgraph AI ["AI Engine"]
+        LLM["Grok / Ollama Provider"]
+    end
+
+    Prompt --> Router
+    Router --> Tools
+    Tools --> D1DB
+    Tools --> KVNS
+    Tools --> R2Storage
+    Storage --> Router
+    Router --> LLM
+    LLM --> Prompt
 ```
 
 The split is intentional:
