@@ -100,6 +100,11 @@ from models import Hand, HandDatabase
 from parsers import HandParser
 from analysis import LeakEngine, SummaryGenerator, hand_3bet_flags
 from importing import HandImporter, discover_scan_dirs, merge_scan_dirs
+import importing as _importing_real  # qualified import: reaches the real HandImporter
+# even though the "class HandImporter:"/"class HandParser:"/"class HandDatabase:"
+# definitions below shadow the bare names above for the rest of this module —
+# used to delegate CoinPoker main.log/.gz chain-stitching, which the local
+# HandImporter below cannot do (its full_scan() only picks up .txt files).
 from db_migrations import apply_migrations, read_player_position_stats, refresh_hand_position_facts
 from ocr_capture import OCRCaptureBridge, ReplayWindowCapture
 from utils import (
@@ -490,6 +495,62 @@ class HandDatabase:
                 return row is not None
             finally:
                 conn.close()
+
+    def get_hand_by_id(self, hand_id):
+        """Lightweight hand lookup (date/hero fields only) — used by the real
+        importing.HandImporter's CoinPoker chain-stitching path (_save_hand_if_new)
+        when delegated to via full_scan()'s CoinPoker branch. Not a full hydration
+        (no players/actions/winners) since callers there only need these fields."""
+        from types import SimpleNamespace
+        with self.lock:
+            conn = self._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT date, hero_cards, hero_position FROM hands WHERE hand_id = ?",
+                    (hand_id,),
+                ).fetchone()
+                if not row:
+                    return None
+                if row["date"]:
+                    try:
+                        date_val = datetime.fromisoformat(row["date"])
+                    except (ValueError, TypeError):
+                        date_val = datetime.now()
+                else:
+                    date_val = datetime.now()
+                return SimpleNamespace(
+                    hand_id=hand_id,
+                    date=date_val,
+                    hero_cards=row["hero_cards"] or "",
+                    hero_position=row["hero_position"] or "",
+                )
+            finally:
+                conn.close()
+
+    def hand_needs_hero_backfill(self, hand_id):
+        """True when stored hero cards or position are missing."""
+        with self.lock:
+            conn = self._connect()
+            try:
+                row = conn.execute(
+                    "SELECT hero_cards, hero_position FROM hands WHERE hand_id = ?",
+                    (hand_id,),
+                ).fetchone()
+                if not row:
+                    return False
+                cards = (row[0] or "").strip()
+                position = (row[1] or "").strip()
+                return not cards or not position or position == "?"
+            finally:
+                conn.close()
+
+    @staticmethod
+    def hand_has_hero_fields(hand):
+        """True when a parsed hand has usable hero cards and position."""
+        cards = (getattr(hand, "hero_cards", "") or "").strip()
+        position = (getattr(hand, "hero_position", "") or "").strip()
+        return bool(cards) and bool(position) and position != "?"
 
     def save_hand(self, hand, source_file=""):
         with self.lock:
@@ -1933,11 +1994,30 @@ class HandImporter:
         self.lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = None
+        # Real importing.HandImporter instance, used ONLY to delegate CoinPoker
+        # main.log/.gz chain-stitching (see full_scan()) — this class's own
+        # scan loop below only handles .txt hand-history files. Built lazily so
+        # its per-instance rotation-segment cache (_coinpoker_seg_cache) is
+        # reused across scans instead of re-decompressing .gz files every poll.
+        self._coinpoker_real_importer = None
+
+    def _get_coinpoker_real_importer(self):
+        if self._coinpoker_real_importer is None:
+            self._coinpoker_real_importer = _importing_real.HandImporter(self.settings, db=self.db)
+        return self._coinpoker_real_importer
 
     def update_settings(self, settings):
         with self.lock:
             self.settings = settings
             self.parser = HandParser(settings)
+            if self._coinpoker_real_importer is not None:
+                self._coinpoker_real_importer.update_settings(settings)
+
+    def reparse_hands_missing_hero(self):
+        """Backfill hero cards/stats for hands parsed with the wrong hero name."""
+        if not self.db:
+            return 0
+        return self.db.reparse_hands_missing_hero(self.parser)
 
     def _save_hand_if_new(self, hand, source_file):
         if self.db:
@@ -1984,6 +2064,17 @@ class HandImporter:
                 continue
             if not os.path.isdir(path):
                 continue
+            if site == "CoinPoker":
+                # CoinPoker's client writes main.log / main.N.log.gz, never
+                # .txt — the plain os.walk loop below can never find them, so
+                # delegate this directory's chain-stitched parse to the real
+                # importer instead (see _get_coinpoker_real_importer).
+                try:
+                    cp_saved, cp_files = self._get_coinpoker_real_importer()._import_coinpoker_chain(path)
+                    saved += cp_saved
+                    files_count += cp_files
+                except Exception as exc:
+                    logging.error("CoinPoker chain import failed for %s: %s", path, exc, exc_info=True)
             for root, dirs, files in os.walk(path):
                 for fname in files:
                     if not fname.lower().endswith(".txt"):
@@ -3108,29 +3199,86 @@ def _hud_title_blacklisted(title: str) -> bool:
     return any(b in tl for b in _HUD_WINDOW_BLACKLIST)
 
 
+# CoinPoker's Unity client window title is always the bare string "CoinPoker",
+# whether at the lobby or seated at a table — there's no per-table text to key
+# off (mirrors the same disambiguation problem solved on the Tauri/Rust side
+# in hud.rs's coinpoker_table_active(), which asks the sidecar; here we query
+# the local DB directly since poker_gui.py already holds a handle to it).
+_HUD_DB_REF = None
+_COINPOKER_ACTIVE_CACHE = {"ts": 0.0, "value": False}
+_COINPOKER_ACTIVE_TTL_SEC = 3.0
+_COINPOKER_ACTIVE_WINDOW_SEC = 300  # generous: covers between-hand thinking time
+
+
+def _set_hud_db_ref(db) -> None:
+    global _HUD_DB_REF
+    _HUD_DB_REF = db
+
+
+def _coinpoker_recently_active() -> bool:
+    """True when a CoinPoker hand has been imported recently — the signal used
+    to tell a real (seated) CoinPoker table window apart from the lobby, since
+    both share the identical bare "CoinPoker" OS window title."""
+    now = time.time()
+    cached = _COINPOKER_ACTIVE_CACHE
+    if now - cached["ts"] < _COINPOKER_ACTIVE_TTL_SEC:
+        return cached["value"]
+    cached["ts"] = now
+    db = _HUD_DB_REF
+    if db is None:
+        cached["value"] = False
+        return False
+    try:
+        with db.lock:
+            conn = db._connect()
+            try:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT imported_at FROM hands WHERE site = 'CoinPoker' "
+                    "ORDER BY imported_at DESC LIMIT 1"
+                ).fetchone()
+            finally:
+                conn.close()
+        if not row or not row["imported_at"]:
+            cached["value"] = False
+            return False
+        imported_at = datetime.fromisoformat(str(row["imported_at"]).replace("Z", "+00:00"))
+        if imported_at.tzinfo is not None:
+            age = datetime.now(imported_at.tzinfo) - imported_at
+        else:
+            age = datetime.now() - imported_at
+        cached["value"] = age.total_seconds() <= _COINPOKER_ACTIVE_WINDOW_SEC
+    except Exception:
+        logging.debug("CoinPoker recent-activity check failed", exc_info=True)
+        cached["value"] = False
+    return cached["value"]
+
+
 def _is_acr_table_window(title: str, hwnd=None) -> bool:
-    """True for visible ACR/WPN table windows (not lobbies, IDE, or LeakSnipe)."""
+    """True for visible CoinPoker & ACR/WPN table windows (not lobbies, IDE, or LeakSnipe)."""
     if hwnd is not None and _hud_is_own_window(hwnd):
         return False
     if not title or _hud_title_blacklisted(title):
         return False
-    tl = title.lower()
-    if hwnd is not None and HAS_WIN32:
-        try:
-            class_name = win32gui.GetClassName(hwnd).lower()
-            if class_name == "unitywndclass":
-                if tl == "coinpoker" or tl == "coinpoker lobby" or tl == "lobby":
-                    return False
-                return any(char in tl for char in ("table", "₮", "chp", "gtd", "nl", "pl", "#")) or "limit" in tl
-        except Exception:
-            pass
-    if any(lp in tl for lp in _ACR_LOBBY_PATTERNS):
+    tl = title.strip().lower()
+    
+    # Lobbies to ignore
+    if "lobby" in tl:
         return False
-    if "lobby" in tl and not any(g in tl for g in _ACR_GAME_HINTS):
-        return False
-    has_game = any(g in tl for g in _ACR_GAME_HINTS)
-    has_table = any(t in tl for t in _ACR_TABLE_HINTS)
-    return has_game and has_table
+
+    # CoinPoker client windows (e.g. "CoinPoker", "CoinPoker - Tournament", "CoinPoker - NL Hold'em", etc.)
+    if "coinpoker" in tl:
+        return True
+
+    # ACR / BetACR / WPN / GGPoker / General Poker titles
+    if any(k in tl for k in ("americas cardroom", "acr", "betacr", "wpn", "ggpoker", "poker")):
+        return True
+
+    # Generic poker table indicators
+    if any(k in tl for k in ("table", "no limit", "pot limit", "hold'em", "holdem", "omaha", "tournament", "sng", "sit & go")):
+        return True
+
+    return False
 
 
 def _extract_tournament_id_from_title(title: str) -> str:
@@ -6160,6 +6308,7 @@ class PokerApp(ctk.CTk):
         self.configure(fg_color=self.theme["bg_base"])
 
         self.db = HandDatabase()
+        _set_hud_db_ref(self.db)
         discovered_dirs = discover_scan_dirs(self.settings)
         self.settings["scan_dirs"] = merge_scan_dirs(self.settings.get("scan_dirs"), discovered_dirs)
         if not self.settings["hero_names"].get("BetACR"):

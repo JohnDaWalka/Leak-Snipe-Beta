@@ -152,6 +152,14 @@ if ($sidecarHealthy) {
 
 Clear-StaleViteDevPort -Port $ViteDevPort
 
+Write-Host "Starting LeakSnipe -> Cloudflare hand sync..."
+try {
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ScriptDir "start-sync.ps1")
+} catch {
+    Write-Warning "Could not start hand sync: $($_.Exception.Message)"
+}
+Write-Host ""
+
 $vcvars = Find-VcVars
 Write-Host "Starting LeakSnipe (first Rust compile can take 1-2 minutes)..."
 Write-Host ""
