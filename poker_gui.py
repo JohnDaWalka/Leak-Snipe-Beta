@@ -2972,18 +2972,18 @@ def build_hero_anchored_seat_slots(seat_map, layout_key):
         return {}
 
     seats_sorted = sorted(seat_map.keys())
-    n = len(seats_sorted)
     hero_seat = next(
         (seat for seat, info in seat_map.items() if info.get("is_hero")),
         seats_sorted[0],
     )
 
-    hero_idx = seats_sorted.index(hero_seat)
-    slot_count = min(n, len(layout_slots))
-    return {
-        seat: layout_slots[(seats_sorted.index(seat) - hero_idx) % slot_count]
-        for seat in seat_map
-    }
+    mapping = {}
+    for seat in seat_map:
+        # Calculate physical seat offset relative to Hero around table of capacity layout_key
+        slot_offset = (seat - hero_seat) % layout_key
+        mapping[seat] = layout_slots[slot_offset % len(layout_slots)]
+
+    return mapping
 
 
 def tag_hero_seats(seat_map, settings, site):
@@ -3266,8 +3266,8 @@ def _is_acr_table_window(title: str, hwnd=None) -> bool:
     if "lobby" in tl:
         return False
 
-    # CoinPoker client windows (e.g. "CoinPoker", "CoinPoker - Tournament", "CoinPoker - NL Hold'em", etc.)
-    if "coinpoker" in tl:
+    # CoinPoker client & tournament windows (e.g. "CoinPoker", "CoinPoker - Tournament", "₮1.10 After Hours...", etc.)
+    if "coinpoker" in tl or "₮" in tl:
         return True
 
     # ACR / BetACR / WPN / GGPoker / General Poker titles
@@ -3275,7 +3275,7 @@ def _is_acr_table_window(title: str, hwnd=None) -> bool:
         return True
 
     # Generic poker table indicators
-    if any(k in tl for k in ("table", "no limit", "pot limit", "hold'em", "holdem", "omaha", "tournament", "sng", "sit & go")):
+    if any(k in tl for k in ("table", "no limit", "pot limit", "hold'em", "holdem", "omaha", "tournament", "sng", "sit & go", "turbo", "bounty", "pko")):
         return True
 
     return False
