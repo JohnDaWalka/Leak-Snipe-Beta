@@ -111,3 +111,7 @@ poker-daemon/*.exe
 logs/*.png
 logs/*.jpg
 
+
+.dev.vars*
+!.dev.vars.example
+!.env.example
