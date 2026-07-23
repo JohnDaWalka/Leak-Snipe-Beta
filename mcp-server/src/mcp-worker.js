@@ -2134,12 +2134,19 @@ class McpServer {
     }
 
     if (url.pathname === '/mcp' && request.method === 'POST') {
+      const corsHeaders = {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': '*'
+      };
+
       let body;
       try {
         body = await request.json();
       } catch {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }),
-          { status: 400, headers: { 'Content-Type': 'application/json' } });
+          { status: 400, headers: corsHeaders });
       }
 
       const { jsonrpc, id, method, params } = body || {};
@@ -2147,7 +2154,7 @@ class McpServer {
       // Notifications in JSON-RPC (id is undefined/null) or explicit notification method
       if (!method || method.startsWith('notifications/') || method === 'notifications/initialized' || (id === undefined && method !== 'initialize')) {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result: {} }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } });
+          { status: 200, headers: corsHeaders });
       }
 
       if (method === 'initialize') {
@@ -2202,33 +2209,27 @@ class McpServer {
 
       if (method === 'resources/list') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { resources: [] } }),
-          { headers: { 'Content-Type': 'application/json' } });
+          { headers: corsHeaders });
       }
 
       if (method === 'resources/templates/list') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { resourceTemplates: [] } }),
-          { headers: { 'Content-Type': 'application/json' } });
+          { headers: corsHeaders });
       }
 
       if (method === 'prompts/list') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { prompts: [] } }),
-          { headers: { 'Content-Type': 'application/json' } });
+          { headers: corsHeaders });
       }
 
       if (method === 'completion/complete') {
         return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: { completion: { values: [], hasMore: false } } }),
-          { headers: { 'Content-Type': 'application/json' } });
+          { headers: corsHeaders });
       }
 
       if (method === 'tools/call') {
         const { name, arguments: args } = params || {};
         const tool = this.tools.get(name);
-        const corsHeaders = {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': '*'
-        };
         if (!tool) {
           return new Response(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32601, message: `Tool '${name}' not found` } }),
             { headers: corsHeaders });
@@ -2244,7 +2245,7 @@ class McpServer {
       }
 
       return new Response(JSON.stringify({ jsonrpc: '2.0', id: id ?? null, result: {} }),
-        { headers: { 'Content-Type': 'application/json' } });
+        { headers: corsHeaders });
     }
 
     if (url.pathname === '/health') {
@@ -4218,6 +4219,30 @@ export default {
           'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
           'Access-Control-Allow-Headers': '*',
           'Access-Control-Max-Age': '86400'
+        }
+      });
+    }
+
+    // Serve MCP server info for GET /mcp (used by connector validation probes)
+    if (request.method === 'GET' && (url.pathname === '/mcp' || url.pathname === '/mcp/')) {
+      return new Response(JSON.stringify({
+        name: 'leaksnipe-mcp',
+        description: 'LeakSnipe Poker Hand History & Analytics MCP Server',
+        version: '1.2.0',
+        status: 'online',
+        mcpVersion: '2024-11-05',
+        transport: 'streamable-http',
+        endpoint: '/mcp'
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+          'Access-Control-Allow-Headers': '*',
+          'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+          'CDN-Cache-Control': 'no-store',
+          'Cloudflare-CDN-Cache-Control': 'no-store'
         }
       });
     }
