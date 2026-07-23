@@ -238,7 +238,7 @@ fn collect_table_windows() -> Vec<TableBounds> {
     use std::os::windows::ffi::OsStringExt;
     use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsWindowVisible,
+        EnumWindows, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, IsIconic, IsWindowVisible,
     };
 
     struct Search {
@@ -249,6 +249,16 @@ fn collect_table_windows() -> Vec<TableBounds> {
     unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let search = &mut *(lparam.0 as *mut Search);
         if IsWindowVisible(hwnd).as_bool() == false {
+            return BOOL(1);
+        }
+
+        // A minimized window is still "visible" per IsWindowVisible, but
+        // GetWindowRect reports garbage off-screen coordinates for it
+        // (Windows convention, roughly -32000,-32000) — a minimized second
+        // table/lobby/instance that happens to match the title heuristic
+        // would otherwise win the "first match" and park the overlay nowhere
+        // near the real table.
+        if IsIconic(hwnd).as_bool() {
             return BOOL(1);
         }
 
